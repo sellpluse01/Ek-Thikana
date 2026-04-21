@@ -1,0 +1,176 @@
+import React from 'react';
+import { motion } from 'motion/react';
+import { ChevronLeft, Shield, FileText, Target, Users, HelpCircle, RefreshCcw } from 'lucide-react';
+
+export type StaticPageId = 'about' | 'privacy' | 'terms' | 'refund' | 'careers' | 'blog' | 'vendor-guide';
+
+export default function StaticPage({ 
+  pageId, 
+  onBack 
+}: { 
+  pageId: StaticPageId, 
+  onBack: () => void 
+}) {
+  const pages: Record<StaticPageId, { title: string, icon: any, content: React.ReactNode }> = {
+    about: {
+      title: 'আমাদের লক্ষ্য (Our Mission)',
+      icon: Target,
+      content: (
+        <div className="space-y-6 text-slate-600 leading-relaxed">
+          <p className="text-lg font-medium text-slate-900 italic">"এক ঠিকানায় সব সমাধান"</p>
+          <p>
+            Ek-Thikana বাংলাদেশের একটি আধুনিক এবং নির্ভরযোগ্য মাল্টি-ভেন্ডার ইকমার্স প্ল্যাটফর্ম। আমাদের মূল লক্ষ্য হলো গ্রামীণ এবং শহুরে ক্ষুদ্র উদ্যোক্তাদের উৎপাদিত খাঁটি পণ্য সরাসরি সাধারণ ক্রেতাদের কাছে পৌঁছে দেয়া।
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
+            <div className="p-6 bg-amber-50 rounded-3xl border border-amber-100">
+              <h4 className="font-bold text-amber-900 mb-2">বিশুদ্ধতা</h4>
+              <p className="text-sm">আমরা পণ্যের গুণগত মান এবং বিশুদ্ধতার সাথে কখনোই আপস করি না।</p>
+            </div>
+            <div className="p-6 bg-indigo-50 rounded-3xl border border-indigo-100">
+              <h4 className="font-bold text-indigo-900 mb-2">বিশ্বাস</h4>
+              <p className="text-sm">লক্ষাধিক ক্রেতা ও বিক্রেতার মাঝে একটি আস্থার সেতুবন্ধন তৈরি করাই আমাদের কাজ।</p>
+            </div>
+          </div>
+        </div>
+      )
+    },
+    privacy: {
+      title: 'প্রাইভেসি পলিসি',
+      icon: Shield,
+      content: (
+        <div className="space-y-6 text-slate-600">
+          <p>Ek-Thikana আপনার ব্যক্তিগত তথ্যের গোপনীয়তা রক্ষা করতে প্রতিশ্রুতিবদ্ধ। আপনার তথ্য আমরা শুধুমাত্র আপনার কেনাকাটার অভিজ্ঞতা উন্নত করতে ব্যবহার করি।</p>
+          <ul className="list-disc pl-6 space-y-4 font-medium">
+            <li>আমরা কখনোই আপনার ব্যক্তিগত তথ্য কোনো থার্ড-পার্টি প্রতিষ্ঠানের কাছে বিক্রি করি না।</li>
+            <li>আপনার পেমেন্ট ইনফরমেশন সম্পূর্ণ এনক্রিপ্টেড এবং সুরক্ষিত।</li>
+            <li>যেকোনো সময় আপনি আপনার তথ্য মুছে ফেলার জন্য অনুরোধ করতে পারেন।</li>
+          </ul>
+        </div>
+      )
+    },
+    terms: {
+      title: 'শর্তাবলী (Terms & Conditions)',
+      icon: FileText,
+      content: (
+        <div className="space-y-6 text-slate-600">
+          <p>আমাদের প্ল্যাটফর্ম ব্যবহারের মাধ্যমে আপনি নিচের শর্তাবলীতে সম্মত হচ্ছেন:</p>
+          <div className="space-y-4">
+            <h4 className="font-bold text-slate-900">১. অর্ডার প্রক্রিয়া</h4>
+            <p className="text-sm">সঠিক নাম, ঠিকানা এবং ফোন নম্বর প্রদান করা বাধ্যতামূলক। ভুল তথ্যের জন্য ডেলিভারি বিলম্বিত হলে কর্তৃপক্ষ দায়ী থাকবে না।</p>
+            
+            <h4 className="font-bold text-slate-900">২. মূল্য তালিকা</h4>
+            <p className="text-sm">পণ্যের মূল্য যেকোনো সময় পরিবর্তন হতে পারে যা মার্কেট ডিমান্ড এবং স্টকের ওপর নির্ভরশীল।</p>
+          </div>
+        </div>
+      )
+    },
+    refund: {
+      title: 'রিফান্ড পলিসি',
+      icon: RefreshCcw,
+      content: (
+        <div className="space-y-6 text-slate-600">
+          <p>আমরা গ্রাহক সন্তুষ্টিকে সর্বোচ্চ গুরুত্ব দেই। তবে কিছু নির্দিষ্ট শর্তে রিফান্ড কার্যকর হবে:</p>
+          <ul className="list-disc pl-6 space-y-4 font-medium">
+            <li>পণ্য ডেলিভারি পাওয়ার ২৪ ঘণ্টার মধ্যে কোনো সমস্যা দেখা দিলে আমাদের জানাতে হবে।</li>
+            <li>পণ্যটি অব্যবহৃত এবং মূল প্যাকিং সহ ফেরত দিতে হবে।</li>
+            <li>রিফান্ড অনুমোদিত হওয়ার পর ৩-৭ কার্যদিবসের মধ্যে আপনার মূল পেমেন্ট মেথডে টাকা ফেরত দেয়া হবে।</li>
+          </ul>
+        </div>
+      )
+    },
+    careers: {
+      title: 'ক্যারিয়ার ও জবস',
+      icon: Users,
+      content: (
+        <div className="space-y-6 text-slate-600">
+          <p>আপনি কি প্রযুক্তির মাধ্যমে মানুষের জীবনে ইতিবাচক প্রভাব ফেলতে চান? আমাদের ক্রমবর্ধমান টিমে আপনাকে স্বাগতম!</p>
+          <div className="p-8 bg-slate-50 border-2 border-dashed border-slate-200 rounded-[2.5rem] text-center">
+            <Users className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+            <h4 className="font-bold text-slate-900 mb-2">বর্তমানে কোনো খালি পদ নেই</h4>
+            <p className="text-sm italic">আপনার রিজিউমে পাঠিয়ে রাখতে পারেন: career@ek-thikana.com</p>
+          </div>
+        </div>
+      )
+    },
+    blog: {
+      title: 'ব্লগ ও নিউজ',
+      icon: FileText,
+      content: (
+        <div className="grid grid-cols-1 gap-8">
+          {[
+            { title: 'খাঁটি মধুর আসল চেনার কৌশল', date: '১০ এপ্রিল ২০২৬', excerpt: 'বাজারের ভেজাল মধুর ভিড়ে কীভাবে সঠিক মধু বেছে নেবেন?' },
+            { title: 'ঘি এর স্বাস্থ্য উপকারিতা', date: '০৫ এপ্রিল ২০২৬', excerpt: 'কেন প্রতিদিনের খাদ্যতালিকায় খাঁটি ঘি রাখা উচিত?' },
+          ].map((post, i) => (
+            <div key={i} className="p-8 bg-white border border-slate-100 rounded-[2rem] hover:shadow-xl transition-all cursor-pointer group">
+              <span className="text-[10px] font-black text-amber-600 uppercase tracking-widest">{post.date}</span>
+              <h4 className="text-xl font-bold text-slate-900 mt-2 group-hover:text-amber-600">{post.title}</h4>
+              <p className="text-sm text-slate-500 mt-2">{post.excerpt}</p>
+            </div>
+          ))}
+        </div>
+      )
+    },
+    'vendor-guide': {
+      title: 'ভেন্ডর হিসেবে যোগ দিন',
+      icon: HelpCircle,
+      content: (
+        <div className="space-y-6 text-slate-600">
+          <p className="font-semibold text-slate-900">বাংলাদেশে ব্যবসা বাড়ানোর শ্রেষ্ঠ মাধ্যম এখন Ek-Thikana!</p>
+          <div className="space-y-8 mt-8">
+            <div className="flex gap-6">
+              <div className="w-12 h-12 bg-amber-500 text-white rounded-2xl flex items-center justify-center font-bold flex-shrink-0">১</div>
+              <div>
+                <h4 className="font-bold text-slate-900">রেজিস্ট্রেশন করুন</h4>
+                <p className="text-sm">আপনার ইমেইল ও আইডি কার্ড দিয়ে দ্রুত অ্যাকাউন্ট খুলুন।</p>
+              </div>
+            </div>
+            <div className="flex gap-6">
+              <div className="w-12 h-12 bg-amber-500 text-white rounded-2xl flex items-center justify-center font-bold flex-shrink-0">২</div>
+              <div>
+                <h4 className="font-bold text-slate-900">পণ্য আপলোড দিন</h4>
+                <p className="text-sm">সঠিক ছবি ও বর্ণনা দিয়ে আপনার ইনভেন্টরি সাজান।</p>
+              </div>
+            </div>
+            <div className="flex gap-6">
+              <div className="w-12 h-12 bg-amber-500 text-white rounded-2xl flex items-center justify-center font-bold flex-shrink-0">৩</div>
+              <div>
+                <h4 className="font-bold text-slate-900">বিক্রি শুরু করুন</h4>
+                <p className="text-sm">অর্ডার গ্রহণ করুন এবং আমাদের লজিস্টিকস টিমের মাধ্যমে ডেলিভারি দিন।</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )
+    }
+  };
+
+  const currentPage = pages[pageId];
+  if (!currentPage) return null;
+
+  return (
+    <div className="max-w-4xl mx-auto px-4 py-16">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+      >
+        <button 
+          onClick={onBack}
+          className="flex items-center gap-2 text-slate-400 hover:text-amber-600 font-bold mb-12 transition-colors group"
+        >
+          <ChevronLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" /> পেছনে ফিরে যান
+        </button>
+
+        <div className="flex items-center gap-4 mb-12">
+          <div className="w-16 h-16 bg-amber-500 text-white rounded-3xl flex items-center justify-center shadow-2xl shadow-amber-500/20">
+            <currentPage.icon className="w-8 h-8" />
+          </div>
+          <h1 className="text-4xl font-black text-slate-900 tracking-tight">{currentPage.title}</h1>
+        </div>
+
+        <div className="bg-white rounded-[3rem] border border-slate-100 p-10 md:p-16 shadow-2xl shadow-slate-100 italic md:not-italic">
+          {currentPage.content}
+        </div>
+      </motion.div>
+    </div>
+  );
+}

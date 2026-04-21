@@ -1,0 +1,367 @@
+import { useState, useMemo } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Filter, ChevronDown, ShoppingBag, Plus, Star, Zap, X, SlidersHorizontal, LayoutGrid, Heart, Leaf } from 'lucide-react';
+import { getCategoryLabel } from './Home';
+import { useMarketplace } from '../context/MarketplaceContext';
+import { MOCK_PRODUCTS, CATEGORIES } from '../data/mockData';
+import toast from 'react-hot-toast';
+
+export default function CategoryView({ category, onCheckout, onProductClick }: { category: string | null, onCheckout?: () => void, onProductClick?: (product: any) => void }) {
+  const { addToCart, clearCart, toggleWishlist, isInWishlist, products } = useMarketplace();
+  const [showFilters, setShowFilters] = useState(false);
+  const [selectedWeights, setSelectedWeights] = useState<Record<string, number>>({});
+  const [selectedSubCategory, setSelectedSubCategory] = useState<string | null>(null);
+  
+  const displayProducts = products.length > 0 ? products : MOCK_PRODUCTS;
+
+  // States for Filter/Sort
+  const [priceMax, setPriceMax] = useState(10000);
+  const [minRating, setMinRating] = useState(0);
+  const [onlyInStock, setOnlyInStock] = useState(false);
+  const [sortBy, setSortBy] = useState('popularity');
+
+  const currentCategory = CATEGORIES.find(c => c.id === category);
+  const subCategories = currentCategory?.sub.split(', ').map(s => s.trim()) || [];
+
+  const filteredAndSortedProducts = useMemo(() => {
+    let result = displayProducts.filter(p => !category || p.category === category);
+    
+    if (selectedSubCategory) {
+      result = result.filter(p => p.subCategory === selectedSubCategory);
+    }
+
+    // Applying Filters
+    result = result.filter(p => p.price <= priceMax);
+    if (minRating > 0) result = result.filter(p => p.rating >= minRating);
+    if (onlyInStock) result = result.filter(p => p.stock > 0);
+
+    // Applying Sorting
+    if (sortBy === 'price-low') result.sort((a, b) => a.price - b.price);
+    if (sortBy === 'price-high') result.sort((a, b) => b.price - a.price);
+    if (sortBy === 'rating') result.sort((a, b) => b.rating - a.rating);
+
+    return result;
+  }, [category, priceMax, minRating, onlyInStock, sortBy]);
+
+  const handleAddToCart = (product: any) => {
+    addToCart({
+      productId: product.id,
+      name: product.name,
+      price: product.price,
+      quantity: 1,
+      weight: selectedWeights[product.id] || 1
+    });
+    toast.success(`${product.name} ঝুড়িতে যোগ করা হয়েছে!`);
+  };
+
+  const handleBuyNow = (product: any) => {
+    clearCart();
+    addToCart({
+      productId: product.id,
+      name: product.name,
+      price: product.price,
+      quantity: 1,
+      weight: selectedWeights[product.id] || 1
+    });
+    
+    if (onCheckout) {
+      onCheckout();
+    }
+    toast.success('সরাসরি টাকা পরিশোধের জন্য রিডাইরেক্ট করা হচ্ছে...');
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Page Header */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-8">
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-amber-600 text-sm font-bold uppercase tracking-wider">
+            <span className="w-8 h-px bg-amber-600"></span>
+            Marketplace
+          </div>
+          <h1 className="text-4xl sm:text-5xl font-bold text-slate-900 capitalize">
+            {currentCategory?.name || 'সব পণ্য'}
+          </h1>
+          <p className="text-slate-500 font-medium">নিচের তালিকা থেকে আপনার পছন্দের পণ্যটি বেছে নিন।</p>
+        </div>
+        
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => setShowFilters(!showFilters)}
+            className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-bold transition-all ${
+              showFilters 
+                ? 'bg-slate-900 text-white shadow-xl shadow-slate-200' 
+                : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50'
+            }`}
+          >
+            <Filter className={`w-4 h-4 ${showFilters ? 'text-amber-400' : ''}`} /> 
+            {showFilters ? 'বন্ধ করুন' : 'ফিল্টার'}
+          </button>
+          <div className="relative">
+            <select 
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="appearance-none bg-white border border-slate-200 rounded-2xl px-6 py-3 pr-12 font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500/20 active:scale-95 transition-all cursor-pointer"
+            >
+              <option value="popularity">জনপ্রিয়তা</option>
+              <option value="rating">সেরা রেটিং</option>
+              <option value="price-low">মূল্য: কম থেকে বেশি</option>
+              <option value="price-high">মূল্য: বেশি থেকে কম</option>
+            </select>
+            <ChevronDown className="absolute right-4 top-4 w-4 h-4 text-slate-400 pointer-events-none" />
+          </div>
+        </div>
+      </div>
+
+      {/* Sub-categories Chips */}
+      {subCategories.length > 0 && (
+        <div className="flex items-center gap-2 overflow-x-auto pb-4 mb-8 no-scrollbar">
+          <button
+            onClick={() => setSelectedSubCategory(null)}
+            className={`flex-shrink-0 px-6 py-2.5 rounded-full text-sm font-bold transition-all flex items-center gap-2 ${
+              selectedSubCategory === null
+                ? 'bg-amber-600 text-white shadow-lg shadow-amber-100'
+                : 'bg-white border border-slate-100 text-slate-500 hover:border-amber-200'
+            }`}
+          >
+            <LayoutGrid className="w-4 h-4" /> সব
+          </button>
+          {subCategories.map((sub, i) => (
+            <button
+              key={i}
+              onClick={() => setSelectedSubCategory(sub === selectedSubCategory ? null : sub)}
+              className={`flex-shrink-0 px-6 py-2.5 rounded-full text-sm font-bold transition-all ${
+                selectedSubCategory === sub
+                  ? 'bg-amber-600 text-white shadow-lg shadow-amber-100'
+                  : 'bg-white border border-slate-100 text-slate-500 hover:border-amber-200'
+              }`}
+            >
+              {sub}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Advanced Filter Panel */}
+      <AnimatePresence>
+        {showFilters && (
+          <motion.div
+            initial={{ height: 0, opacity: 0, marginBottom: 0 }}
+            animate={{ height: 'auto', opacity: 1, marginBottom: 48 }}
+            exit={{ height: 0, opacity: 0, marginBottom: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="bg-white rounded-[2.5rem] border border-slate-100 p-8 shadow-sm grid grid-cols-1 md:grid-cols-3 gap-12">
+              {/* Price Range */}
+              <div className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-slate-900 flex items-center gap-2">
+                    <SlidersHorizontal className="w-4 h-4 text-amber-500" /> মূল্য সীমা
+                  </h4>
+                  <span className="text-sm font-bold text-amber-600">৳০ - ৳{priceMax.toLocaleString()}</span>
+                </div>
+                <input 
+                  type="range"
+                  min="0"
+                  max="10000"
+                  step="100"
+                  value={priceMax}
+                  onChange={(e) => setPriceMax(Number(e.target.value))}
+                  className="w-full h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                />
+                <div className="flex justify-between text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  <span>৳০</span>
+                  <span>৳১০,০০০+</span>
+                </div>
+              </div>
+
+              {/* Min Rating */}
+              <div className="space-y-6">
+                <h4 className="font-bold text-slate-900 flex items-center gap-2">
+                  <Star className="w-4 h-4 text-amber-500" /> মিনিমাম রেটিং
+                </h4>
+                <div className="flex gap-2">
+                  {[0, 3, 4, 4.5].map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => setMinRating(r)}
+                      className={`flex-1 py-2 rounded-xl border text-xs font-bold transition-all ${
+                        minRating === r 
+                          ? 'bg-slate-900 border-slate-900 text-white' 
+                          : 'border-slate-100 text-slate-500 hover:border-amber-200'
+                      }`}
+                    >
+                      {r === 0 ? 'সব' : `${r}+ ★`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Availability */}
+              <div className="space-y-6">
+                <h4 className="font-bold text-slate-900 flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-amber-500" /> অ্যাভেইলেবলিটি
+                </h4>
+                <label className="flex items-center gap-3 cursor-pointer group">
+                  <div 
+                    onClick={() => setOnlyInStock(!onlyInStock)}
+                    className={`w-12 h-6 rounded-full transition-all relative ${
+                      onlyInStock ? 'bg-amber-500' : 'bg-slate-200'
+                    }`}
+                  >
+                    <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${
+                      onlyInStock ? 'left-7' : 'left-1'
+                    }`} />
+                  </div>
+                  <span className="font-bold text-slate-600 group-hover:text-amber-600 transition-colors">শুধুমাত্র স্টকে আছে</span>
+                </label>
+                <button 
+                  onClick={() => {
+                    setPriceMax(10000);
+                    setMinRating(0);
+                    setOnlyInStock(false);
+                    setSortBy('popularity');
+                  }}
+                  className="text-xs font-bold text-slate-400 hover:text-red-500 flex items-center gap-1 transition-colors"
+                >
+                  <X className="w-3 h-3" /> রিসেট ফিল্টার
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Product Grid */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-8">
+        <AnimatePresence mode="popLayout">
+          {filteredAndSortedProducts.length > 0 ? filteredAndSortedProducts.map((product) => (
+            <motion.div
+              layout
+              key={product.id}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="group bg-white rounded-[2.5rem] p-4 border border-slate-100 hover:border-amber-200 hover:shadow-2xl hover:shadow-slate-100 transition-all"
+            >
+              {/* Product Image */}
+              <div 
+                onClick={() => onProductClick?.(product)}
+                className="relative aspect-square rounded-[2rem] overflow-hidden bg-slate-50 mb-6 cursor-pointer"
+              >
+                <img 
+                  src={product.images?.[0] || (product as any).image} 
+                  alt={product.name}
+                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                  referrerPolicy="no-referrer"
+                />
+                
+                {/* Wishlist Toggle Button */}
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleWishlist(product.id);
+                  }}
+                  className={`absolute top-4 right-4 w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-lg backdrop-blur-md z-10 ${
+                    isInWishlist(product.id) 
+                      ? 'bg-red-500 text-white' 
+                      : 'bg-white/90 text-slate-400 hover:text-red-500'
+                  }`}
+                >
+                  <Heart className={`w-5 h-5 ${isInWishlist(product.id) ? 'fill-current' : ''}`} />
+                </button>
+
+                {(() => {
+                  const badge = getCategoryLabel(product.category, (product as any).subCategory);
+                  if (badge) {
+                    return (
+                      <div className={`absolute top-4 left-4 px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-tight shadow-sm flex items-center gap-1.5 z-10 ${badge.color}`}>
+                        {product.category === 'grocery' && <Leaf className="w-3 h-3" />}
+                        {badge.text}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="absolute bottom-4 left-4 inline-flex items-center gap-1.5 px-3 py-1 bg-white/90 backdrop-blur rounded-full text-xs font-bold text-slate-900 shadow-sm border border-slate-100">
+                      <Star className="w-3 h-3 fill-amber-500 text-amber-500" /> {product.rating}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Details */}
+              <div className="space-y-4 px-2">
+                <div>
+                  <h3 
+                    onClick={() => onProductClick?.(product)}
+                    className="text-xl font-bold text-slate-900 group-hover:text-amber-600 transition-colors uppercase truncate cursor-pointer"
+                  >
+                    {product.name}
+                  </h3>
+                  <p className="text-sm text-slate-500 font-medium">বিক্রেতা: রাজু এন্টারপ্রাইজ</p>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-2xl font-black text-slate-900">৳{product.price}</span>
+                  <span className={`text-xs font-bold px-3 py-1 rounded-full ${product.stock > 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>
+                    {product.stock > 0 ? `স্টক: ${product.stock} ${product.unit}` : 'আউট অফ স্টক'}
+                  </span>
+                </div>
+
+                {/* Weight/Option Selector */}
+                {product.category === 'protein' && (
+                  <div className="flex gap-2">
+                    {[0.5, 1, 2, 5].map((w) => (
+                      <button
+                        key={w}
+                        onClick={() => setSelectedWeights({ ...selectedWeights, [product.id]: w })}
+                        className={`flex-1 py-1.5 rounded-xl border text-xs font-bold transition-all ${
+                          (selectedWeights[product.id] || 1) === w 
+                            ? 'bg-amber-600 border-amber-600 text-white' 
+                            : 'border-slate-100 text-slate-500 hover:border-amber-200'
+                        }`}
+                      >
+                        {w} Kg
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex gap-4 pt-2">
+                  <button 
+                    onClick={() => handleAddToCart(product)}
+                    disabled={product.stock === 0}
+                    className="flex-1 py-4 bg-slate-100 text-slate-900 rounded-2xl font-bold hover:bg-slate-200 disabled:opacity-50 transition-all active:scale-95 flex items-center justify-center gap-2 group/btn"
+                  >
+                    <ShoppingBag className="w-5 h-5 group-hover/btn:animate-bounce" /> ঝুড়িতে
+                  </button>
+                  <button 
+                    onClick={() => handleBuyNow(product)}
+                    disabled={product.stock === 0}
+                    className="flex-1 py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-amber-600 disabled:opacity-50 transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    কিনুন <Zap className="w-4 h-4 fill-amber-400 text-amber-400" />
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )) : (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="col-span-full py-20 text-center space-y-4"
+            >
+              <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto">
+                <Filter className="w-8 h-8 text-slate-300" />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">পণ্য খুঁজে পাওয়া যায়নি</h3>
+                <p className="text-slate-500">দয়া করে ফিল্টার পরিবর্তন করে পুনরায় চেষ্টা করুন।</p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}

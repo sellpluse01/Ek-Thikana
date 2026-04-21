@@ -1,0 +1,3465 @@
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { 
+  User, Store, Settings, Package, CreditCard, TrendingUp, 
+  CheckCircle2, Clock, Truck, ShieldCheck, ShieldAlert, Plus, Link as LinkIcon, Download, QrCode,
+  Edit, Trash2, Search, Filter, ArrowUpRight, BarChart3, PieChart, X,
+  Save, AlertCircle, RefreshCw, Upload, Heart, Percent, ShoppingBag, Smartphone, MessageSquare, Bell
+} from 'lucide-react';
+import { useMarketplace } from '../context/MarketplaceContext';
+import { db, auth, storage } from '../lib/firebase';
+import { 
+  collection, query, where, getDocs, addDoc, updateDoc, doc, 
+  onSnapshot, serverTimestamp, deleteDoc, getDoc, setDoc, orderBy
+} from 'firebase/firestore';
+import { ref, uploadString, getDownloadURL, uploadBytes } from 'firebase/storage';
+import { 
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  AreaChart, Area, BarChart, Bar
+} from 'recharts';
+import { QRCodeSVG } from 'qrcode.react';
+import { generateInvoicePDF } from '../services/pdfService';
+import { Product, Order, VendorProfile, Chat } from '../types';
+import { CATEGORIES, MOCK_PRODUCTS } from '../data/mockData';
+import toast from 'react-hot-toast';
+import ChatSystem from './ChatSystem';
+
+const MOCK_SALES_DATA = [
+  { day: 'Sat', sales: 4000, orders: 12 },
+  { day: 'Sun', sales: 3000, orders: 8 },
+  { day: 'Mon', sales: 2000, orders: 5 },
+  { day: 'Tue', sales: 2780, orders: 9 },
+  { day: 'Wed', sales: 1890, orders: 4 },
+  { day: 'Thu', sales: 2390, orders: 7 },
+  { day: 'Fri', sales: 3490, orders: 15 },
+];
+
+const MOCK_VENDOR_PRODUCTS = [
+  { id: '1', name: 'দেশি শোল মাছ', category: 'grocery', price: 850, stock: 10, unit: 'Kg', approved: true },
+  { id: '2', name: 'ব্রয়লার মুরগি', category: 'grocery', price: 190, stock: 50, unit: 'Kg', approved: true },
+  { id: '3', name: 'গরুর মাংস (প্রিমিয়াম)', category: 'grocery', price: 780, stock: 20, unit: 'Kg', approved: false },
+];
+
+const MOCK_VENDOR_ORDERS = [
+  { id: '8801', customer: 'Rakib Ahmed', amount: 2450, status: 'pending', date: '10 mins ago' },
+  { id: '8802', customer: 'Sumi Akter', amount: 1200, status: 'shipped', date: '2 hours ago' },
+  { id: '8803', customer: 'Arif Hasan', amount: 3500, status: 'delivered', date: 'Yesterday' },
+];
+
+export default function Dashboard({ activeTab: controlledActiveTab, setActiveTab: setControlledActiveTab }: { 
+  activeTab?: string, 
+  setActiveTab?: (t: string) => void 
+} = {}) {
+  const { profile, wishlist, toggleWishlist, unreadChatsCount, unreadNotificationsCount, notifications, markNotificationAsRead, createNotification } = useMarketplace();
+  const [internalActiveTab, setInternalActiveTab] = useState('overview');
+  
+  const activeTab = controlledActiveTab || internalActiveTab;
+  const setActiveTab = setControlledActiveTab || setInternalActiveTab;
+  const [adminSubTab, setAdminSubTab] = useState<'overview'|'vendors'|'products'|'coupons'|'settings'|'users'>('overview');
+  const [vendorProducts, setVendorProducts] = useState<Product[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [allOrders, setAllOrders] = useState<Order[]>([]);
+  const [customerOrders, setCustomerOrders] = useState<Order[]>([]);
+  const [vendorOrders, setVendorOrders] = useState<Order[]>([]);
+  const [platformStats, setPlatformStats] = useState({
+    totalSales: 0,
+    totalOrders: 0,
+    totalCommission: 0,
+    totalVendors: 0,
+    totalUsers: 0
+  });
+  const [pendingVendors, setPendingVendors] = useState<any[]>([]);
+  const [allVendors, setAllVendors] = useState<any[]>([]);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [coupons, setCoupons] = useState<any[]>([]);
+  const [newCoupon, setNewCoupon] = useState({ code: '', discount: 10, type: 'percentage' });
+  const [vendorProfile, setVendorProfile] = useState<VendorProfile | null>(null);
+  const [categoryCommissions, setCategoryCommissions] = useState<Record<string, number>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingData, setIsLoadingData] = useState(true);
+  const [allChats, setAllChats] = useState<Chat[]>([]);
+  const [selectedChat, setSelectedChat] = useState<Chat | null>(null);
+  const [showChatModal, setShowChatModal] = useState(false);
+
+  const [showQR, setShowQR] = useState<string | null>(null);
+  const [trackingOrderId, setTrackingOrderId] = useState<string | null>(null);
+  const [showAddProduct, setShowAddProduct] = useState(false);
+  const [showAddCard, setShowAddCard] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  
+  const [newCard, setNewCard] = useState({
+    number: '',
+    holder: '',
+    expiry: '',
+    type: 'visa'
+  });
+
+  const [savedCards, setSavedCards] = useState([
+    { id: '1', number: '**** **** **** 4589', holder: 'User Name', expiry: '12/28', type: 'visa' }
+  ]);
+  
+  // Verification State
+  const [verificationData, setVerificationData] = useState({
+    tradeLicense: '',
+    tradeLicenseImg: '',
+    nidCard: '',
+    nidCardImg: '',
+    tinCertificate: '',
+    tinCertificateImg: '',
+    bankAccount: {
+      accountName: '',
+      accountNumber: '',
+      bankName: 'Islami Bank',
+      branchName: '',
+      routingNumber: ''
+    },
+    video: ''
+  });
+
+  // Product Form State
+  const [newProduct, setNewProduct] = useState({
+    name: '',
+    price: '',
+    discountPrice: '',
+    isFlashSale: false,
+    stock: '',
+    category: CATEGORIES[0].id,
+    subCategory: CATEGORIES[0].sub.split(', ')[0],
+    description: '',
+    unit: 'Kg',
+    images: [] as string[],
+    video: ''
+  });
+
+  // Storefront State
+  const [storeData, setStoreData] = useState({
+    storeName: '',
+    description: '',
+    storeLogo: '',
+    storeBanner: '',
+    contactEmail: '',
+    contactPhone: '',
+    contactPerson: '',
+    storeAddress: ''
+  });
+
+  // User Settings State
+  const [settingsData, setSettingsData] = useState({
+    name: '',
+    address: ''
+  });
+
+  useEffect(() => {
+    if (!profile) return;
+    setSettingsData({
+      name: profile.name || '',
+      address: profile.address || ''
+    });
+
+    const currentUserId = auth.currentUser?.uid;
+    if (!currentUserId) return;
+
+    setIsLoadingData(true);
+
+    // Fetch Vendor Profile
+    const fetchVendorData = async () => {
+      const vendorRef = doc(db, 'vendors', currentUserId);
+      const vendorSnap = await getDoc(vendorRef);
+      if (vendorSnap.exists()) {
+        const data = vendorSnap.data() as VendorProfile;
+        setVendorProfile(data);
+        setStoreData({
+          storeName: data.storeName || '',
+          description: data.description || '',
+          storeLogo: data.storeLogo || '',
+          storeBanner: data.storeBanner || '',
+          contactEmail: data.contactEmail || '',
+          contactPhone: data.contactPhone || '',
+          contactPerson: data.contactPerson || '',
+          storeAddress: data.storeAddress || ''
+        });
+        setVerificationData({
+          tradeLicense: data.tradeLicense || '',
+          tradeLicenseImg: data.tradeLicenseImg || '',
+          nidCard: data.nidCard || '',
+          nidCardImg: data.nidCardImg || '',
+          tinCertificate: data.tinCertificate || '',
+          tinCertificateImg: data.tinCertificateImg || '',
+          bankAccount: {
+            accountName: data.bankAccount?.accountName || '',
+            accountNumber: data.bankAccount?.accountNumber || '',
+            bankName: data.bankAccount?.bankName || 'Islami Bank',
+            branchName: data.bankAccount?.branchName || '',
+            routingNumber: data.bankAccount?.routingNumber || ''
+          },
+          mfs: {
+            bkash: data.mfs?.bkash || '',
+            nagad: data.mfs?.nagad || ''
+          }
+        });
+      }
+    };
+
+    fetchVendorData();
+
+    // Fetch Commissions
+    const fetchCommissions = async () => {
+      const commSnap = await getDoc(doc(db, 'settings', 'commissions'));
+      if (commSnap.exists()) {
+        setCategoryCommissions(commSnap.data() as Record<string, number>);
+      } else {
+        // Initial defaults
+        const defaults: Record<string, number> = {};
+        CATEGORIES.forEach(c => defaults[c.id] = 10);
+        setCategoryCommissions(defaults);
+      }
+    };
+    fetchCommissions();
+
+    // Admin Specific Realtime Data
+    let unsubUsers: () => void = () => {};
+    let unsubVendors: () => void = () => {};
+    let unsubAllOrders: () => void = () => {};
+
+    const handleFirebaseError = (err: any, context: string) => {
+      console.error(`${context} Error:`, err);
+      if (err?.message?.includes('Quota exceeded') || err?.code === 'resource-exhausted') {
+        toast.error('Firebase দৈনিক ফ্রি লিমিট শেষ হয়ে গেছে। দয়া করে আগামীকাল আবার চেষ্টা করুন।', {
+          id: 'quota-error',
+          duration: 10000
+        });
+      }
+    };
+
+    if (profile.role === 'admin') {
+      const qAllOrders = collection(db, 'orders');
+      unsubAllOrders = onSnapshot(qAllOrders, (snap) => {
+        const orders = snap.docs.map(d => ({ id: d.id, ...d.data() } as Order));
+        setAllOrders(orders);
+        const totalSales = orders.reduce((acc, o) => acc + (o.totalAmount || 0), 0);
+        const totalComm = orders.reduce((acc, o) => acc + (o.adminCommission || 0), 0);
+        setPlatformStats(prev => ({
+          ...prev,
+          totalOrders: snap.size,
+          totalSales,
+          totalCommission: totalComm
+        }));
+      }, (err) => handleFirebaseError(err, "Admin All Orders"));
+
+      const qVendors = collection(db, 'vendors');
+      unsubVendors = onSnapshot(qVendors, (snap) => {
+        const vendors = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setAllVendors(vendors);
+        setPendingVendors(vendors.filter((v: any) => v.verificationStatus === 'pending'));
+        setPlatformStats(prev => ({ ...prev, totalVendors: snap.size }));
+      }, (err) => handleFirebaseError(err, "Admin Vendors"));
+
+      const qUsers = collection(db, 'users');
+      unsubUsers = onSnapshot(qUsers, (snap) => {
+        const users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setAllUsers(users);
+        setPlatformStats(prev => ({ ...prev, totalUsers: snap.size }));
+      }, (err) => handleFirebaseError(err, "Admin Users"));
+
+      const qAllProducts = collection(db, 'products');
+      const unsubAllProducts = onSnapshot(qAllProducts, (snap) => {
+        setAllProducts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Product)));
+      }, (err) => handleFirebaseError(err, "Admin Products"));
+
+      const qCoupons = collection(db, 'coupons');
+      const unsubCoupons = onSnapshot(qCoupons, (snap) => {
+        setCoupons(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      }, (err) => handleFirebaseError(err, "Admin Coupons"));
+
+      return () => {
+        unsubAllOrders();
+        unsubVendors();
+        unsubUsers();
+        unsubAllProducts();
+        unsubCoupons();
+      };
+    }
+
+    // Listen for products
+    const qProducts = query(collection(db, 'products'), where('vendorId', '==', currentUserId));
+    const unsubProducts = onSnapshot(qProducts, (snap) => {
+      const products = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Product));
+      setVendorProducts(products);
+    }, (err) => handleFirebaseError(err, "Vendor Products"));
+
+    // Listen for orders
+    const qOrders = query(collection(db, 'orders'), where('vendorId', '==', currentUserId));
+    const unsubOrders = onSnapshot(qOrders, (snap) => {
+      const orders = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
+      setVendorOrders(orders);
+    }, (err) => handleFirebaseError(err, "Vendor Orders"));
+
+    // Listen for customer orders (My Purchases)
+    const qMyOrders = query(collection(db, 'orders'), where('customerId', '==', currentUserId));
+    const unsubMyOrders = onSnapshot(qMyOrders, (snap) => {
+      const orders = snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as Order));
+      setCustomerOrders(orders);
+      setIsLoadingData(false);
+    }, (err) => handleFirebaseError(err, "Customer Orders"));
+
+    // Listen for Chats
+    const qChats = query(collection(db, 'chats'), where('participants', 'array-contains', currentUserId));
+    const unsubChats = onSnapshot(qChats, (snap) => {
+      const chats = snap.docs.map(d => ({ id: d.id, ...d.data() } as Chat));
+      // Sort in memory to avoid index requirements and permission errors
+      chats.sort((a, b) => {
+        const timeA = a.lastMessageTime?.toMillis?.() || 0;
+        const timeB = b.lastMessageTime?.toMillis?.() || 0;
+        return timeB - timeA;
+      });
+      setAllChats(chats);
+    }, (err) => handleFirebaseError(err, "Chats"));
+
+    return () => {
+      unsubProducts();
+      unsubOrders();
+      unsubMyOrders();
+      unsubUsers();
+      unsubVendors();
+      unsubAllOrders();
+      unsubChats();
+    };
+  }, [profile]);
+
+  const handleImageUpload = (e: any, target: 'product' | 'logo' | 'banner' | 'license' | 'nid' | 'tin' | 'video') => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const compressImage = (file: File, maxWidth = 800, quality = 0.5): Promise<string> => {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+          const img = new Image();
+          img.src = event.target?.result as string;
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
+
+            if (width > maxWidth) {
+              height = (maxWidth / width) * height;
+              width = maxWidth;
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx?.drawImage(img, 0, 0, width, height);
+            
+            let finalQuality = quality;
+            if (file.size > 10 * 1024 * 1024) finalQuality = 0.3;
+            else if (file.size > 5 * 1024 * 1024) finalQuality = 0.4;
+
+            resolve(canvas.toDataURL('image/jpeg', finalQuality));
+          };
+        };
+      });
+    };
+
+    if (target === 'product') {
+      const remainingSlots = 6 - newProduct.images.length;
+      if (remainingSlots <= 0) {
+        toast.error('সর্বোচ্চ ৬টি ছবি আপলোড করা যাবে।');
+        return;
+      }
+      
+      const filesToProcess = Array.from(files).slice(0, remainingSlots);
+
+      filesToProcess.forEach(async (file: any) => {
+        // Removed hard 10MB rejection for "Auto Convert" system
+        // But keep a safety limit for browser memory
+        if (file.size > 50 * 1024 * 1024) { 
+          toast.error(`${file.name} অনেক বড়! ৫০এমবি এর নিচের ছবি দিন।`);
+          return;
+        }
+        
+        try {
+          const loadingId = toast.loading(`${file.name} কনভার্ট হচ্ছে...`);
+          const compressedBase64 = await compressImage(file);
+          setNewProduct(prev => ({ 
+            ...prev, 
+            images: [...prev.images, compressedBase64].slice(0, 6) 
+          }));
+          toast.success(`${file.name} রেডি!`, { id: loadingId });
+        } catch (err) {
+          toast.error('ছবি প্রসেস করতে সমস্যা হয়েছে!');
+        }
+      });
+    } else if (target === 'video') {
+      const file = files[0];
+      if (file.size > 10 * 1024 * 1024) { 
+        toast.error('ভিডিওটি অনেক বড়! দয়া করে ১০এমবি এর নিচের ভিডিও দিন।');
+        return;
+      }
+
+      // Check duration
+      const video = document.createElement('video');
+      video.preload = 'metadata';
+      video.onloadedmetadata = function() {
+        window.URL.revokeObjectURL(video.src);
+        if (video.duration > 50) {
+          toast.error('ভিডিওর দৈর্ঘ্য সর্বোচ্চ ৫০ সেকেন্ড হতে হবে।');
+          return;
+        }
+        
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64 = reader.result as string;
+          setNewProduct(prev => ({ ...prev, video: base64 }));
+          toast.success('ভিডিও লোড হয়েছে!');
+
+          if (file.size > 500 * 1024) {
+            toast('Firestore limits 1MB per document. Large videos may cause upload failure.', {
+              icon: '⚠️',
+              duration: 4000
+            });
+          }
+        };
+        reader.readAsDataURL(file);
+      };
+      video.src = URL.createObjectURL(file);
+    } else {
+      const file = files[0];
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64 = reader.result as string;
+        if (target === 'logo') {
+          setStoreData(prev => ({ ...prev, storeLogo: base64 }));
+        } else if (target === 'banner') {
+          setStoreData(prev => ({ ...prev, storeBanner: base64 }));
+        } else if (target === 'license') {
+          setVerificationData(prev => ({ ...prev, tradeLicenseImg: base64 }));
+        } else if (target === 'nid') {
+          setVerificationData(prev => ({ ...prev, nidCardImg: base64 }));
+        } else if (target === 'tin') {
+          setVerificationData(prev => ({ ...prev, tinCertificateImg: base64 }));
+        }
+        toast.success('ছবি লোড হয়েছে!');
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleUpdateProfile = async () => {
+    if (!settingsData.name) return toast.error('নাম প্রয়োজন!');
+    setIsSubmitting(true);
+    try {
+      const currentUserId = auth.currentUser?.uid;
+      if (!currentUserId) return;
+      await updateDoc(doc(db, 'users', currentUserId), {
+        ...settingsData
+      });
+      toast.success('প্রোফাইল আপডেট হয়েছে!');
+    } catch (error: any) {
+      toast.error('আপডেট করতে সমস্যা হয়েছে: ' + error.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleUpdateStorefront = async () => {
+    if (!storeData.storeName) return toast.error('দোকানের নাম প্রয়োজন!');
+    setIsSubmitting(true);
+    try {
+      const currentUserId = auth.currentUser?.uid;
+      if (!currentUserId) return;
+      await setDoc(doc(db, 'vendors', currentUserId), {
+        ...storeData,
+        vendorId: currentUserId,
+        joinedAt: serverTimestamp()
+      }, { merge: true });
+      toast.success('স্টোরফ্রন্ট তথ্য সংরক্ষিত হয়েছে!');
+    } catch (error: any) {
+      toast.error('আপডেট করতে সমস্যা হয়েছে: ' + error.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const resetProductForm = () => {
+    setNewProduct({
+      name: '',
+      price: '',
+      discountPrice: '',
+      isFlashSale: false,
+      stock: '',
+      category: CATEGORIES[0].id,
+      subCategory: CATEGORIES[0].sub.split(', ')[0],
+      description: '',
+      unit: 'Kg',
+      images: [] as string[],
+      video: ''
+    });
+    setEditingProduct(null);
+  };
+
+  const dataURLtoBlob = (dataurl: string) => {
+    const arr = dataurl.split(',');
+    const mime = arr[0].match(/:(.*?);/)![1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
+  };
+
+  const uploadToStorage = async (data: string, path: string): Promise<string> => {
+    if (!data || data.startsWith('http')) return data;
+    
+    const storageRef = ref(storage, path);
+    
+    // Per-file upload logic with 120s timeout
+    const uploadTask = (async () => {
+      let blob: Blob;
+      if (data.startsWith('data:')) {
+        blob = dataURLtoBlob(data);
+      } else {
+        const response = await fetch(data);
+        blob = await response.blob();
+      }
+      
+      await uploadBytes(storageRef, blob, { contentType: blob.type });
+      return await getDownloadURL(storageRef);
+    })();
+
+    const timeout = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error(`Upload Timeout for ${path}`)), 120000)
+    );
+
+    return Promise.race([uploadTask, timeout]) as Promise<string>;
+  };
+
+  const handleAddProduct = async () => {
+    const p = newProduct;
+    if (!p.name || !p.price || !p.stock || p.images.length === 0) {
+      toast.error('সব তথ্য এবং অন্তত ১টি ছবি দিন।');
+      return;
+    }
+
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    
+    const loadingToastId = toast.loading('পণ্য আপলোড শুরু হচ্ছে...', { duration: 300000 });
+
+    try {
+      const currentUserId = auth.currentUser?.uid;
+      const timestamp = Date.now();
+      
+      if (!currentUserId) throw new Error("লগইন করা নেই।");
+
+      // Verify vendor status first - if this fails, better to fail early
+      const userDoc = await getDoc(doc(db, 'users', currentUserId));
+      const role = userDoc.data()?.role;
+      if (role !== 'vendor' && !isAdmin) {
+         throw new Error("আপনার পণ্য আপলোড করার পারমিশন নেই। আপনি কি ভেন্ডর হিসেবে রেজিস্টার্ড?");
+      }
+
+      toast.loading('ছবিসমূহ আপলোড হচ্ছে...', { id: loadingToastId });
+      
+      const validImages = p.images.filter(img => img && img.length > 100);
+      
+      // Parallel image uploads
+      const imageUrls = await Promise.all(
+        validImages.map((imgData, index) => 
+          uploadToStorage(imgData, `products/${currentUserId}/${timestamp}_${index}.jpg`)
+        )
+      );
+
+      let videoUrl = '';
+      if (p.video && p.video.length > 100) {
+        toast.loading('ভিডিও আপলোড হচ্ছে...', { id: loadingToastId });
+        videoUrl = await uploadToStorage(p.video, `products/${currentUserId}/${timestamp}_v.mp4`);
+      }
+
+      toast.loading('তথ্য ডাটাবেসে সেভ করা হচ্ছে...', { id: loadingToastId });
+
+      const productData = {
+        name: String(p.name).trim(),
+        price: Number(p.price),
+        discountPrice: p.discountPrice ? Number(p.discountPrice) : null,
+        stock: Number(p.stock),
+        category: String(p.category),
+        subCategory: String(p.subCategory || ''),
+        description: String(p.description || ''),
+        unit: String(p.unit || 'Kg'),
+        isFlashSale: Boolean(p.isFlashSale),
+        vendorId: currentUserId,
+        approved: editingProduct ? Boolean(editingProduct.approved) : false,
+        updatedAt: new Date().toISOString(),
+        images: imageUrls,
+        image: imageUrls[0],
+        video: videoUrl
+      };
+
+      if (editingProduct) {
+        await updateDoc(doc(db, 'products', editingProduct.id), productData);
+        toast.success('পণ্যটি আপডেট হয়েছে!', { id: loadingToastId });
+      } else {
+        await addDoc(collection(db, 'products'), {
+          ...productData,
+          createdAt: new Date().toISOString()
+        });
+        toast.success('পণ্যটি সফলভাবে আপলোড হয়েছে!', { id: loadingToastId });
+      }
+      
+      setShowAddProduct(false);
+      resetProductForm();
+    } catch (error: any) {
+      console.error("[Fatal Product Upload Error]", error);
+      let errMsg = 'আপলোড ব্যর্থ হয়েছে।';
+      if (error.message?.includes('Timeout')) errMsg = 'ইন্টারনেট কানেকশন দুর্বল। আবার চেষ্টা করুন।';
+      else if (error.message) errMsg = error.message;
+      
+      toast.error(errMsg, { id: loadingToastId });
+    } finally {
+      setIsSubmitting(false);
+      // Ensure the processing state is cleared
+      setTimeout(() => toast.dismiss(loadingToastId), 3000);
+    }
+  };
+
+  const handleUpdateVerification = async () => {
+    setIsSubmitting(true);
+    try {
+      const currentUserId = auth.currentUser?.uid;
+      if (!currentUserId) return;
+
+      await setDoc(doc(db, 'vendors', currentUserId), {
+        ...verificationData,
+        vendorId: currentUserId,
+        verificationStatus: 'pending',
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      
+      // Update local profile state if possible
+      if (vendorProfile) {
+        setVendorProfile({ 
+          ...vendorProfile, 
+          ...verificationData, 
+          verificationStatus: 'pending' 
+        });
+      }
+      
+      toast.success('ভেরিফিকেশন রিকোয়েস্ট পাঠানো হয়েছে!');
+    } catch (error: any) {
+      toast.error('আপডেট করতে সমস্যা হয়েছে: ' + error.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleUpdateStock = async (productId: string, currentStock: number, diff: number) => {
+    try {
+      const newStock = Math.max(0, currentStock + diff);
+      await updateDoc(doc(db, 'products', productId), { stock: newStock });
+      toast.success(`স্টক আপডেট হয়ে ${newStock} হয়েছে`);
+    } catch (error: any) {
+      toast.error('স্টক আপডেট করতে সমস্যা হয়েছে');
+    }
+  };
+
+  const handleUpdateOrderStatus = async (orderId: string, status: string) => {
+    try {
+      await updateDoc(doc(db, 'orders', orderId), { status });
+      toast.success('অর্ডারের স্ট্যাটাস আপডেট করা হয়েছে!');
+    } catch (error: any) {
+      toast.error('স্ট্যাটাস আপডেট করতে সমস্যা হয়েছে।');
+    }
+  };
+
+  const handleDeleteProduct = async (productId: string) => {
+    if (!confirm('আপনি কি নিশ্চিত যে আপনি এই পণ্যটি মুছে ফেলতে চান?')) return;
+    try {
+      await deleteDoc(doc(db, 'products', productId));
+      toast.success('পণ্যটি মুছে ফেলা হয়েছে।');
+    } catch (error: any) {
+      toast.error('পণ্য মুছে ফেলতে সমস্যা হয়েছে।');
+    }
+  };
+
+  const handleAddCard = () => {
+    if (!newCard.number || !newCard.holder || !newCard.expiry) {
+      toast.error('সব তথ্য পূরণ করুন');
+      return;
+    }
+    const maskedNumber = '**** **** **** ' + newCard.number.slice(-4);
+    setSavedCards([...savedCards, { ...newCard, id: Date.now().toString(), number: maskedNumber }]);
+    setShowAddCard(false);
+    setNewCard({ number: '', holder: '', expiry: '', type: 'visa' });
+    toast.success('কার্ডটি সফলভাবে যুক্ত হয়েছে!');
+  };
+
+  const handleRequestWithdrawal = async () => {
+    if ((profile?.walletBalance || 0) < 500) {
+      toast.error('উইথড্র করতে সর্বনিম্ন ৫০০ টাকা প্রয়োজন।');
+      return;
+    }
+    toast.success('উইথড্র রিকোয়েস্ট পাঠানো হয়েছে!');
+  };
+
+  const handleRechargeWallet = () => {
+    toast('শীঘ্রই আসছে: সরাসরি রিচার্জ সুবিধা।', { icon: '💳' });
+  };
+
+  const handleUpdateCommissions = async () => {
+    setIsSubmitting(true);
+    try {
+      await setDoc(doc(db, 'settings', 'commissions'), categoryCommissions);
+      toast.success('কমিশন রেট আপডেট করা হয়েছে!');
+    } catch (error: any) {
+      toast.error('আপডেট ব্যর্থ হয়েছে');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleApproveVendor = async (vendorId: string) => {
+    try {
+      await updateDoc(doc(db, 'vendors', vendorId), { 
+        verified: true,
+        verificationStatus: 'verified' 
+      });
+      await updateDoc(doc(db, 'users', vendorId), { isVerified: true });
+      
+      // Update local states if present
+      setAllVendors(prev => prev.map(v => v.id === vendorId ? { ...v, verified: true, verificationStatus: 'verified' } : v));
+      setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
+      
+      await createNotification({
+        userId: vendorId,
+        title: 'ভেরিফিকেশন সফল!',
+        message: 'অভিনন্দন! আপনার ভেন্ডর প্রোফাইল ভেরিফাইড করা হয়েছে।',
+        type: 'vendor',
+        link: '#verification'
+      });
+      
+      toast.success('ভেন্ডর ভেরিফিকেশন সফল হয়েছে!');
+    } catch (error: any) {
+      toast.error('ভেরিফিকেশন ব্যর্থ হয়েছে');
+    }
+  };
+
+  const handleDeclineVendor = async (vendorId: string) => {
+    const reason = prompt('কেন রিজেক্ট করছেন? (ঐচ্ছিক)');
+    try {
+      await updateDoc(doc(db, 'vendors', vendorId), { 
+        verificationStatus: 'rejected',
+        rejectionReason: reason || 'নথি অস্পষ্ট বা অসম্পূর্ণ।'
+      });
+
+      // Update local states if present
+      setAllVendors(prev => prev.map(v => v.id === vendorId ? { ...v, verificationStatus: 'rejected', rejectionReason: reason || 'নথি অস্পষ্ট বা অসম্পূর্ণ।' } : v));
+      setPendingVendors(prev => prev.filter(v => v.id !== vendorId));
+
+      await createNotification({
+        userId: vendorId,
+        title: 'ভেরিফিকেশন রিজেক্ট হয়েছে',
+        message: `দুঃখিত, আপনার ভেরিফিকেশন নথি সঠিক নয়। কারণ: ${reason || 'নথি অস্পষ্ট বা অসম্পূর্ণ।'}`,
+        type: 'vendor',
+        link: '#verification'
+      });
+
+      toast.error('ভেন্ডর ভেরিফিকেশন রিজেক্ট করা হয়েছে।');
+    } catch (error: any) {
+      toast.error('অপারেশন ব্যর্থ হয়েছে');
+    }
+  };
+
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
+  const handleBlockVendor = async (vendorId: string, type: 'blocked' | 'temp_blocked' | 'active') => {
+    try {
+      await updateDoc(doc(db, 'vendors', vendorId), { status: type });
+      await updateDoc(doc(db, 'users', vendorId), { status: type });
+      
+      setAllVendors(prev => prev.map(v => v.id === vendorId ? { ...v, status: type } : v));
+      
+      const messages = {
+        blocked: 'আপনার অ্যাকাউন্ট স্থায়ীভাবে ব্লক করা হয়েছে।',
+        temp_blocked: 'আপনার অ্যাকাউন্ট সাময়িকভাবে ব্লক করা হয়েছে।',
+        active: 'আপনার অ্যাকাউন্ট সচল করা হয়েছে।'
+      };
+      
+      await createNotification({
+        userId: vendorId,
+        title: `অ্যাকাউন্ট স্ট্যাটাস: ${type.toUpperCase()}`,
+        message: messages[type],
+        type: 'system'
+      });
+      
+      toast.success(`ভেন্ডর স্ট্যাটাস ${type} করা হয়েছে`);
+    } catch (error: any) {
+      toast.error('স্ট্যাটাস আপডেট করতে সমস্যা হয়েছে');
+    }
+  };
+
+  const handleBlockUser = async (userId: string, type: 'blocked' | 'temp_blocked' | 'active') => {
+    try {
+      await updateDoc(doc(db, 'users', userId), { status: type });
+      
+      // If they are a vendor, update vendor doc too
+      const vendorSnap = await getDoc(doc(db, 'vendors', userId));
+      if (vendorSnap.exists()) {
+        await updateDoc(doc(db, 'vendors', userId), { status: type });
+        setAllVendors(prev => prev.map(v => v.id === userId ? { ...v, status: type } : v));
+      }
+      
+      setAllUsers(prev => prev.map(u => u.id === userId ? { ...u, status: type } : u));
+      
+      const messages = {
+        blocked: 'আপনার অ্যাকাউন্ট স্থায়ীভাবে ব্লক করা হয়েছে।',
+        temp_blocked: 'আপনার অ্যাকাউন্ট সাময়িকভাবে ব্লক করা হয়েছে।',
+        active: 'আপনার অ্যাকাউন্ট সচল করা হয়েছে।'
+      };
+      
+      await createNotification({
+        userId,
+        title: `অ্যাকাউন্ট স্ট্যাটাস: ${type.toUpperCase()}`,
+        message: messages[type],
+        type: 'system'
+      });
+      
+      toast.success(`ইউজার স্ট্যাটাস ${type} করা হয়েছে`);
+    } catch (error: any) {
+      toast.error('স্ট্যাটাস আপডেট করতে সমস্যা হয়েছে');
+    }
+  };
+
+  const handleApproveProduct = async (productId: string, status: boolean) => {
+    try {
+      await updateDoc(doc(db, 'products', productId), { approved: status });
+      toast.success(status ? 'পণ্যটি এপ্রুভ করা হয়েছে' : 'পণ্যটি আন-এপ্রুভ করা হয়েছে');
+    } catch (error: any) {
+      toast.error('অপারেশন ব্যর্থ হয়েছে');
+    }
+  };
+
+  const handleDeleteProductAdmin = async (productId: string) => {
+    if (!confirm('আপনি কি নিশ্চিত যে আপনি এই পণ্যটি মুছে ফেলতে চান?')) return;
+    try {
+      await deleteDoc(doc(db, 'products', productId));
+      toast.success('পণ্যটি চিরতরে মুছে ফেলা হয়েছে।');
+    } catch (error: any) {
+      toast.error('পণ্য মুছে ফেলতে সমস্যা হয়েছে।');
+    }
+  };
+
+  const handleDeleteVendor = async (vendorId: string) => {
+    if (!confirm('আপনি কি নিশ্চিত যে আপনি এই ভেন্ডরকে মুছে ফেলতে চান? এটি ভেন্ডর এবং তাদের সকল পণ্য মুছে ফেলবে না, তবে তাদের এক্সেস বন্ধ করবে।')) return;
+    try {
+      // For safety, we just remove the vendor profile and set user role back to customer
+      await deleteDoc(doc(db, 'vendors', vendorId));
+      await updateDoc(doc(db, 'users', vendorId), { role: 'customer' });
+      toast.success('ভেন্ডর প্রোফাইল মুছে ফেলা হয়েছে।');
+    } catch (error: any) {
+      toast.error('মুছে ফেলতে সমস্যা হয়েছে।');
+    }
+  };
+
+  const handleCreateCoupon = async () => {
+    if (!newCoupon.code) return toast.error('কোড দিন');
+    try {
+      await addDoc(collection(db, 'coupons'), {
+        ...newCoupon,
+        createdAt: new Date().toISOString(),
+        active: true
+      });
+      toast.success('কুপন তৈরি হয়েছে!');
+      setNewCoupon({ code: '', discount: 10, type: 'percentage' });
+    } catch (error) {
+      toast.error('কুপন তৈরি করা যায়নি');
+    }
+  };
+
+  const handleDeleteCoupon = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'coupons', id));
+      toast.success('কুপন মুছে ফেলা হয়েছে');
+    } catch (error) {
+      toast.error('মুছে ফেলা যায়নি');
+    }
+  };
+
+  const isAdmin = profile?.role === 'admin';
+  const isVendor = profile?.role === 'vendor' || isAdmin;
+
+  const handleDownloadInvoice = (id: string) => {
+    const mockOrder = {
+      id,
+      items: [{ name: 'Premium Hilsha Fish', quantity: 1, price: 2450 }],
+      totalAmount: 2450
+    };
+    generateInvoicePDF(mockOrder);
+    toast.success('ইনভয়েস ডাউনলোড শুরু হয়েছে!');
+  };
+
+  const handleContactCustomer = async (customerId: string) => {
+    try {
+      const userSnap = await getDoc(doc(db, 'users', customerId));
+      let customerName = 'Customer';
+      if (userSnap.exists()) {
+        customerName = userSnap.data().name || 'Customer';
+      }
+      
+      const ids = [auth.currentUser?.uid, customerId].sort();
+      const chatId = ids.join('_');
+      
+      // We don't need to create the doc here, ChatSystem handles it on mount
+      setSelectedChat({
+        id: chatId,
+        participants: [auth.currentUser!.uid, customerId],
+        customerId: customerId,
+        vendorId: auth.currentUser!.uid,
+        customerName: customerName,
+        vendorName: profile?.name || 'Vendor'
+      } as Chat);
+      
+      setActiveTab('messages');
+      toast.success(`${customerName} এর সাথে চ্যাট শুরু হচ্ছে...`);
+    } catch (error) {
+      console.error("Error contacting customer:", error);
+      toast.error('যোগাযোগ করা সম্ভব হচ্ছে না');
+    }
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="flex flex-col lg:flex-row gap-12">
+        {/* Sidebar Nav */}
+        <aside className="w-full lg:w-64 space-y-2">
+          <div className="p-4 bg-amber-50 rounded-3xl border border-amber-100 mb-8">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-amber-500 rounded-2xl flex items-center justify-center text-white font-bold text-xl uppercase">
+                {profile?.name?.[0]}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-slate-900 truncate">{profile?.name}</p>
+                <p className="text-xs text-amber-700 font-bold uppercase tracking-widest">{profile?.role}</p>
+              </div>
+            </div>
+          </div>
+
+          {[
+            { id: 'overview', name: 'Overview', icon: TrendingUp },
+            { id: 'orders', name: 'My Purchases', icon: Package },
+            { id: 'wishlist', name: 'Saved Items', icon: Heart },
+            { id: 'notifications', name: 'Notifications', icon: Bell, badge: unreadNotificationsCount > 0 ? unreadNotificationsCount : undefined },
+            { id: 'messages', name: 'Messages', icon: MessageSquare, badge: unreadChatsCount > 0 ? unreadChatsCount : undefined },
+            { id: 'wallet', name: 'Wallet & Payments', icon: CreditCard },
+            { id: 'profile', name: 'Account Settings', icon: Settings },
+            ...(isVendor ? [
+              { id: 'vendor', name: 'Vendor Dashboard', icon: BarChart3 },
+              { id: 'store_orders', name: 'Store Orders', icon: ShoppingBag },
+              { id: 'store', name: 'Storefront Settings', icon: Store },
+              { id: 'products', name: 'Inventory Management', icon: Package },
+              { id: 'verification', name: 'Vendor Verification', icon: ShieldCheck },
+            ] : []),
+            ...(isAdmin ? [
+              { id: 'admin', name: 'Admin Master', icon: ShieldCheck },
+            ] : []),
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`w-full flex items-center gap-4 p-4 rounded-2xl font-bold transition-all relative ${
+                activeTab === item.id 
+                  ? 'bg-slate-900 text-white shadow-xl shadow-slate-200' 
+                  : 'text-slate-500 hover:bg-slate-50'
+              }`}
+            >
+              <item.icon className="w-5 h-5" />
+              {item.name}
+              {item.badge && (
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 bg-amber-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-sm">
+                  {item.badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </aside>
+
+        {/* Main Content Area */}
+        <main className="flex-1">
+          {activeTab === 'messages' && (
+            <div className="h-[calc(100vh-200px)] flex flex-col lg:flex-row gap-6">
+              {/* Conversations List */}
+              <div className={`flex-1 lg:flex-none lg:w-80 flex flex-col gap-4 ${selectedChat ? 'hidden lg:flex' : 'flex'}`}>
+                <div className="bg-white p-6 rounded-[2rem] border border-slate-100 flex flex-col gap-4 overflow-y-auto">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xl font-bold text-slate-900">Conversations</h3>
+                    <div className="px-3 py-1 bg-amber-50 text-amber-600 text-[10px] font-black uppercase rounded-full">
+                      {allChats.length} Total
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    {allChats.map((chat) => {
+                      const isSelected = selectedChat?.id === chat.id;
+                      const unread = chat.vendorId === auth.currentUser?.uid ? (chat.unreadCountVendor || 0) : (chat.customerId === auth.currentUser?.uid ? (chat.unreadCountCustomer || 0) : 0);
+                      const otherPartyName = chat.vendorId === auth.currentUser?.uid ? (chat.customerName || 'Customer') : (chat.vendorName || 'Seller');
+                      
+                      return (
+                        <div 
+                          key={chat.id}
+                          onClick={() => setSelectedChat(chat)}
+                          className={`p-4 rounded-2xl border transition-all cursor-pointer group relative ${
+                            isSelected 
+                              ? 'bg-slate-900 border-slate-900 shadow-lg shadow-slate-200' 
+                              : 'bg-white border-slate-100 hover:border-amber-200'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isSelected ? 'bg-white/10 text-white' : unread ? 'bg-amber-50 text-amber-600' : 'bg-slate-50 text-slate-400'}`}>
+                              <User className="w-5 h-5" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <h4 className={`text-sm font-bold truncate ${isSelected ? 'text-white' : 'text-slate-900'}`}>
+                                {otherPartyName}
+                              </h4>
+                              <p className={`text-[10px] truncate ${isSelected ? 'text-white/60' : 'text-slate-400'}`}>
+                                {chat.lastMessage || 'New conversation'}
+                              </p>
+                            </div>
+                            {unread > 0 && !isSelected && (
+                              <div className="w-5 h-5 bg-red-500 text-white text-[10px] flex items-center justify-center rounded-full font-bold">
+                                {unread}
+                              </div>
+                            )}
+                            {isSelected && (
+                              <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-pulse" />
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {allChats.length === 0 && (
+                      <div className="py-20 text-center opacity-30">
+                        <MessageSquare className="w-10 h-10 mx-auto mb-2" />
+                        <p className="text-xs font-bold uppercase tracking-widest">No chats found</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Chat Viewport */}
+              <div className={`flex-1 flex flex-col bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm ${!selectedChat ? 'hidden lg:flex items-center justify-center bg-slate-50/50' : 'flex'}`}>
+                {selectedChat ? (
+                  <div className="h-full flex flex-col relative">
+                    {/* Embedded Header for Mobile Back Button */}
+                    <div className="lg:hidden p-4 border-b border-slate-50 flex items-center gap-4">
+                      <button 
+                        onClick={() => setSelectedChat(null)}
+                        className="p-2 bg-slate-100 rounded-xl"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                      <h4 className="font-bold text-slate-900">
+                        {selectedChat.vendorId === auth.currentUser?.uid ? (selectedChat.customerName || 'Customer') : (selectedChat.vendorName || 'Seller')}
+                      </h4>
+                    </div>
+
+                    <div className="flex-1 w-full max-w-none">
+                       {/* We use a modified ChatSystem or integrated UI here */}
+                       {/* For now, we reuse ChatSystem but it needs to be modified for inline use */}
+                       <ChatSystem 
+                          receiverId={selectedChat.participants.find(p => p !== auth.currentUser?.uid)}
+                          receiverName={selectedChat.vendorId === auth.currentUser?.uid ? (selectedChat.customerName || 'Customer') : (selectedChat.vendorName || 'Seller')}
+                          isOpen={true}
+                          onClose={() => setSelectedChat(null)}
+                          inline={true}
+                       />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center space-y-4 max-w-xs px-6">
+                    <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto shadow-sm text-slate-200">
+                      <MessageSquare className="w-10 h-10" />
+                    </div>
+                    <div>
+                      <h4 className="text-lg font-bold text-slate-900">মেসেজ সিলেক্ট করুন</h4>
+                      <p className="text-sm text-slate-400">কথোপকথন চালিয়ে যেতে বাম পাশের লিস্ট থেকে একটি চ্যাট পছন্দ করুন।</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'wishlist' && (
+            <div className="space-y-8">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-2xl font-bold text-slate-900 font-sans">Saved Items</h3>
+                  <p className="text-slate-500 text-sm">Products you want to buy later</p>
+                </div>
+                <span className="px-4 py-2 bg-slate-100 rounded-full text-xs font-bold text-slate-600">
+                  {wishlist.length} Items
+                </span>
+              </div>
+
+              {wishlist.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                  {MOCK_PRODUCTS.filter(p => wishlist.includes(p.id)).map((product) => (
+                    <div key={product.id} className="bg-white rounded-[2rem] p-4 border border-slate-100 flex items-center gap-4 group">
+                      <div className="w-20 h-20 bg-slate-50 rounded-2xl overflow-hidden flex-shrink-0">
+                        <img src={product.image} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-bold text-slate-900 truncate">{product.name}</h4>
+                        <p className="font-black text-amber-600">৳{product.price}</p>
+                      </div>
+                      <button 
+                        onClick={() => toggleWishlist(product.id)}
+                        className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="bg-white p-20 rounded-[3rem] border border-slate-100 text-center space-y-4">
+                  <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto text-slate-300">
+                    <Heart className="w-10 h-10" />
+                  </div>
+                  <div>
+                    <h4 className="text-xl font-bold text-slate-900">আপনার উইশলিস্টটি খালি</h4>
+                    <p className="text-slate-500">আপনার পছন্দের পণ্যগুলো এখানে সেভ করে রাখুন।</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'admin' && isAdmin && (
+            <div className="space-y-8">
+              {/* Admin Navigation */}
+              <div className="flex flex-wrap gap-4 overflow-x-auto pb-4 scrollbar-hide">
+                {[
+                  { id: 'overview', name: 'ওভারভিউ', icon: BarChart3 },
+                  { id: 'vendors', name: 'ভেন্ডর লিস্ট', icon: Store },
+                  { id: 'users', name: 'ইউজার লিস্ট', icon: User },
+                  { id: 'products', name: 'প্রোডাক্ট রিভিউ', icon: Package },
+                  { id: 'coupons', name: 'ক্যাম্পেইন ও কুপন', icon: Percent },
+                  { id: 'settings', name: 'প্যানেল সেটিংস', icon: Settings }
+                ].map(tab => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setAdminSubTab(tab.id as any)}
+                    className={`flex items-center gap-2 px-6 py-3 rounded-2xl font-bold transition-all whitespace-nowrap ${adminSubTab === tab.id ? 'bg-amber-500 text-white shadow-lg shadow-amber-200' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
+                  >
+                    <tab.icon className="w-4 h-4" /> {tab.name}
+                  </button>
+                ))}
+              </div>
+
+              {adminSubTab === 'overview' && (
+                <>
+                  {/* Admin Overview Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center">
+                          <TrendingUp className="w-5 h-5 text-amber-500" />
+                        </div>
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Platform Sales</span>
+                      </div>
+                      <p className="text-2xl font-black text-slate-900">৳{platformStats.totalSales.toLocaleString()}</p>
+                      <p className="text-[10px] text-green-500 font-bold mt-1">+12.5% from last month</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
+                          <CreditCard className="w-5 h-5 text-blue-500" />
+                        </div>
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Commission</span>
+                      </div>
+                      <p className="text-2xl font-black text-slate-900">৳{platformStats.totalCommission.toLocaleString()}</p>
+                      <p className="text-[10px] text-blue-500 font-bold mt-1">Net profit after payouts</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="w-10 h-10 bg-pink-50 rounded-xl flex items-center justify-center">
+                          <Store className="w-5 h-5 text-pink-500" />
+                        </div>
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Active Vendors</span>
+                      </div>
+                      <p className="text-2xl font-black text-slate-900">{platformStats.totalVendors}</p>
+                      <p className="text-[10px] text-amber-500 font-bold mt-1">{pendingVendors.length} pending approval</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                      <div className="flex items-center gap-3 mb-4">
+                        <div className="w-10 h-10 bg-emerald-50 rounded-xl flex items-center justify-center">
+                          <User className="w-5 h-5 text-emerald-500" />
+                        </div>
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Users</span>
+                      </div>
+                      <p className="text-2xl font-black text-slate-900">{platformStats.totalUsers.toLocaleString()}</p>
+                      <p className="text-[10px] text-emerald-500 font-bold mt-1">Organic growth</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    {/* Platform Growth Chart */}
+                    <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm h-[400px]">
+                      <div className="flex items-center justify-between mb-8">
+                        <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                          <BarChart3 className="w-6 h-6 text-amber-500" /> Platform Growth
+                        </h3>
+                      </div>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={MOCK_SALES_DATA}>
+                          <defs>
+                            <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.1}/>
+                              <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} />
+                          <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} />
+                          <Tooltip />
+                          <Area type="monotone" dataKey="sales" stroke="#f59e0b" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+
+                    {/* Subcategory Distribution */}
+                    <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm h-[400px]">
+                      <h3 className="text-xl font-bold text-slate-900 mb-8 flex items-center gap-2">
+                        <PieChart className="w-6 h-6 text-blue-500" /> Order Distribution
+                      </h3>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={MOCK_SALES_DATA}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                          <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} />
+                          <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} />
+                          <Tooltip />
+                          <Bar dataKey="sales" fill="#3b82f6" radius={[6, 6, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {adminSubTab === 'users' && (
+                <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm overflow-hidden">
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-2xl font-bold text-slate-900">ইউজার ম্যানেজমেন্ট (কাস্টমার ও ভেন্ডর)</h3>
+                    <div className="px-4 py-2 bg-slate-50 rounded-full text-xs font-bold text-slate-500">
+                      Total Registered: {allUsers.length}
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto -mx-8">
+                    <table className="w-full text-left whitespace-nowrap">
+                      <thead>
+                        <tr className="border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-widest bg-slate-50/50">
+                          <th className="px-8 py-5">ইউজার তথ্য</th>
+                          <th className="px-8 py-5">রোল (Role)</th>
+                          <th className="px-8 py-5">স্ট্যাটাস</th>
+                          <th className="px-8 py-5 text-center">অ্যাকশন</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allUsers.map(user => (
+                          <tr key={user.id} className="border-b border-slate-50 hover:bg-slate-50/30 transition-all">
+                            <td className="px-8 py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center font-bold text-lg">
+                                  {user.name?.[0]}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-bold text-slate-900">{user.name}</p>
+                                  <p className="text-[10px] text-slate-400 font-bold">{user.email || user.id.slice(0, 8)}</p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-8 py-4">
+                              <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                                user.role === 'admin' ? 'bg-purple-100 text-purple-700' :
+                                user.role === 'vendor' ? 'bg-amber-100 text-amber-700' :
+                                'bg-slate-100 text-slate-600'
+                              }`}>
+                                {user.role}
+                              </span>
+                            </td>
+                            <td className="px-8 py-4">
+                              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
+                                !user.status || user.status === 'active' ? 'bg-green-50 text-green-600' : 
+                                user.status === 'temp_blocked' ? 'bg-amber-50 text-amber-600 border border-amber-100' :
+                                'bg-red-50 text-red-600'
+                              }`}>
+                                {!user.status || user.status === 'active' ? 'Active' : 
+                                 user.status === 'temp_blocked' ? 'Suspended' : 'Blocked'}
+                              </span>
+                            </td>
+                            <td className="px-8 py-4 text-center">
+                              <div className="flex items-center justify-center gap-2">
+                                {(user.status === 'blocked' || user.status === 'temp_blocked') ? (
+                                  <button 
+                                    onClick={() => handleBlockUser(user.id, 'active')}
+                                    className="w-8 h-8 flex items-center justify-center bg-green-50 text-green-600 rounded-xl hover:bg-green-500 hover:text-white transition-all shadow-sm"
+                                    title="Activate User"
+                                  >
+                                    <ShieldCheck className="w-4 h-4" />
+                                  </button>
+                                ) : (
+                                  <>
+                                    <button 
+                                      onClick={() => handleBlockUser(user.id, 'temp_blocked')}
+                                      className="w-8 h-8 flex items-center justify-center bg-amber-50 text-amber-600 rounded-xl hover:bg-amber-500 hover:text-white transition-all shadow-sm"
+                                      title="Temp Block"
+                                    >
+                                      <Clock className="w-4 h-4" />
+                                    </button>
+                                    <button 
+                                      onClick={() => handleBlockUser(user.id, 'blocked')}
+                                      className="w-8 h-8 flex items-center justify-center bg-red-50 text-red-600 rounded-xl hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                                      title="Permanent Block"
+                                    >
+                                      <ShieldAlert className="w-4 h-4" />
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {adminSubTab === 'vendors' && (
+                <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm overflow-hidden">
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-2xl font-bold text-slate-900">ভেন্ডর ও ভেরিফিকেশন ম্যানেজমেন্ট</h3>
+                    <div className="px-4 py-2 bg-slate-50 rounded-full text-xs font-bold text-slate-500">
+                      Total: {allVendors.length} | Pending: {pendingVendors.length}
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto -mx-8">
+                    <table className="w-full text-left whitespace-nowrap">
+                      <thead>
+                        <tr className="border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-widest bg-slate-50/50">
+                          <th className="px-8 py-5">ভেন্ডর তথ্য</th>
+                          <th className="px-8 py-5">ভেরিফিকেশন নথি</th>
+                          <th className="px-8 py-5">স্ট্যাটাস</th>
+                          <th className="px-8 py-5 text-center">অ্যাকশন</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allVendors.map(vendor => (
+                          <tr key={vendor.id} className="border-b border-slate-50 hover:bg-slate-50/30 transition-all">
+                            <td className="px-8 py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center overflow-hidden border border-slate-100">
+                                  {vendor.storeLogo ? <img src={vendor.storeLogo} referrerPolicy="no-referrer" className="w-full h-full object-cover" /> : <Store className="w-6 h-6 text-slate-400" />}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-bold text-slate-900">{vendor.storeName}</p>
+                                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">{vendor.contactPhone || vendor.id.slice(0, 8)}</p>
+                                  {(vendor as any).status && (vendor as any).status !== 'active' && (
+                                    <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${
+                                      (vendor as any).status === 'blocked' ? 'bg-red-500 text-white' : 'bg-amber-500 text-white'
+                                    }`}>
+                                      {(vendor as any).status}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-8 py-4">
+                              <div className="flex gap-3">
+                                {[
+                                  { img: vendor.nidCardImg, label: 'NID' },
+                                  { img: vendor.tradeLicenseImg, label: 'Trade' },
+                                  { img: vendor.tinCertificateImg, label: 'TIN' }
+                                ].map((doc, idx) => doc.img ? (
+                                  <div key={idx} className="group relative">
+                                    <img 
+                                      src={doc.img} 
+                                      className="w-10 h-10 rounded-lg object-cover border border-slate-200 cursor-zoom-in hover:scale-110 transition-transform" 
+                                      onClick={() => setSelectedImage(doc.img)}
+                                      referrerPolicy="no-referrer"
+                                    />
+                                    <span className="absolute -bottom-4 left-1/2 -translate-x-1/2 text-[8px] font-bold text-slate-400 group-hover:block hidden">{doc.label}</span>
+                                  </div>
+                                ) : null)}
+                                {!vendor.nidCardImg && !vendor.tradeLicenseImg && <span className="text-[10px] text-slate-300">নথি নেই</span>}
+                              </div>
+                            </td>
+                            <td className="px-8 py-4">
+                              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
+                                vendor.verified ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 
+                                vendor.verificationStatus === 'pending' ? 'bg-amber-50 text-amber-600 border border-amber-100 shadow-sm shadow-amber-100' :
+                                vendor.verificationStatus === 'rejected' ? 'bg-red-50 text-red-600 border border-red-100' :
+                                'bg-slate-50 text-slate-400 border border-slate-100'
+                              }`}>
+                                {vendor.verified ? <ShieldCheck className="w-3.5 h-3.5" /> : 
+                                 vendor.verificationStatus === 'pending' ? <Clock className="w-3.5 h-3.5" /> : 
+                                 vendor.verificationStatus === 'rejected' ? <AlertCircle className="w-3.5 h-3.5" /> : null}
+                                {vendor.verified ? 'Verified' : vendor.verificationStatus === 'pending' ? 'Pending' : vendor.verificationStatus === 'rejected' ? 'Rejected' : 'Not Requested'}
+                              </span>
+                            </td>
+                            <td className="px-8 py-4 text-center">
+                              <div className="flex items-center justify-center gap-2">
+                                {vendor.verificationStatus === 'pending' && (
+                                  <>
+                                    <button 
+                                      onClick={() => handleApproveVendor(vendor.id)}
+                                      className="w-8 h-8 flex items-center justify-center bg-emerald-50 text-emerald-600 rounded-xl hover:bg-emerald-500 hover:text-white transition-all shadow-sm"
+                                      title="Approve Verification"
+                                    >
+                                      <CheckCircle2 className="w-4 h-4" />
+                                    </button>
+                                    <button 
+                                      onClick={() => handleDeclineVendor(vendor.id)}
+                                      className="w-8 h-8 flex items-center justify-center bg-red-50 text-red-600 rounded-xl hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                                      title="Decline Verification"
+                                    >
+                                      <X className="w-4 h-4" />
+                                    </button>
+                                  </>
+                                )}
+                                
+                                <div className="h-6 w-px bg-slate-100 mx-1" />
+                                
+                                {((vendor as any).status === 'blocked' || (vendor as any).status === 'temp_blocked') ? (
+                                  <button 
+                                    onClick={() => handleBlockVendor(vendor.id, 'active')}
+                                    className="w-8 h-8 flex items-center justify-center bg-green-50 text-green-600 rounded-xl hover:bg-green-500 hover:text-white transition-all shadow-sm"
+                                    title="Activate User"
+                                  >
+                                    <ShieldCheck className="w-4 h-4" />
+                                  </button>
+                                ) : (
+                                  <>
+                                    <button 
+                                      onClick={() => handleBlockVendor(vendor.id, 'temp_blocked')}
+                                      className="w-8 h-8 flex items-center justify-center bg-amber-50 text-amber-600 rounded-xl hover:bg-amber-500 hover:text-white transition-all shadow-sm"
+                                      title="Temp Block"
+                                    >
+                                      <Clock className="w-4 h-4" />
+                                    </button>
+                                    <button 
+                                      onClick={() => handleBlockVendor(vendor.id, 'blocked')}
+                                      className="w-8 h-8 flex items-center justify-center bg-red-50 text-red-600 rounded-xl hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                                      title="Permanent Block"
+                                    >
+                                      <ShieldAlert className="w-4 h-4" />
+                                    </button>
+                                  </>
+                                )}
+
+                                <button 
+                                  onClick={() => handleDeleteVendor(vendor.id)}
+                                  className="w-8 h-8 flex items-center justify-center bg-slate-100 text-slate-400 rounded-xl hover:bg-red-600 hover:text-white transition-all"
+                                  title="Delete Account"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {adminSubTab === 'products' && (
+                <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm overflow-hidden">
+                  <h3 className="text-2xl font-bold text-slate-900 mb-8">Global Product Review</h3>
+                  <div className="overflow-x-auto -mx-8">
+                    <table className="w-full text-left whitespace-nowrap">
+                      <thead>
+                        <tr className="border-b border-slate-100 text-[10px] font-black uppercase text-slate-400 tracking-widest bg-slate-50/50">
+                          <th className="px-8 py-5">Product Info</th>
+                          <th className="px-8 py-5">Vendor</th>
+                          <th className="px-8 py-5">Price/Stock</th>
+                          <th className="px-8 py-5">Status</th>
+                          <th className="px-8 py-5 text-center">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allProducts.map(product => (
+                          <tr key={product.id} className="border-b border-slate-50 hover:bg-slate-50/30 transition-all">
+                            <td className="px-8 py-4">
+                              <div className="flex items-center gap-3">
+                                <img src={product.images?.[0]} className="w-12 h-12 rounded-xl object-cover bg-slate-100" referrerPolicy="no-referrer" />
+                                <div>
+                                  <p className="text-sm font-bold text-slate-900">{product.name}</p>
+                                  <p className="text-[10px] text-slate-400 uppercase font-bold">{product.category}</p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-8 py-4 text-xs font-bold text-slate-600">
+                              {allVendors.find(v => v.id === product.vendorId)?.storeName || 'Unknown Vendor'}
+                            </td>
+                            <td className="px-8 py-4">
+                              <p className="text-sm font-black text-slate-900">৳{product.price}</p>
+                              <p className="text-[10px] text-slate-400 font-bold">{product.stock} Units Left</p>
+                            </td>
+                            <td className="px-8 py-4">
+                              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase ${product.approved ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>
+                                {product.approved ? <CheckCircle2 className="w-3 h-3" /> : <Clock className="w-3 h-3" />}
+                                {product.approved ? 'Approved' : 'Pending'}
+                              </span>
+                            </td>
+                            <td className="px-8 py-4">
+                              <div className="flex items-center justify-center gap-2">
+                                <button 
+                                  onClick={() => handleApproveProduct(product.id, !product.approved)}
+                                  className={`p-2 rounded-lg transition-all ${product.approved ? 'bg-red-50 text-red-500 hover:bg-red-500 hover:text-white' : 'bg-emerald-50 text-emerald-500 hover:bg-emerald-500 hover:text-white'}`}
+                                  title={product.approved ? 'Unapprove' : 'Approve'}
+                                >
+                                  {product.approved ? <X className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
+                                </button>
+                                <button 
+                                  onClick={() => handleDeleteProductAdmin(product.id)}
+                                  className="p-2 bg-red-50 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-all shadow-sm"
+                                  title="Permanently Delete"
+                                >
+                                  <Trash2 className="w-5 h-5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {adminSubTab === 'coupons' && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  <div className="lg:col-span-2 bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm">
+                    <h3 className="text-2xl font-bold text-slate-900 mb-8">Active Coupons</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {coupons.map(coupon => (
+                        <div key={coupon.id} className="relative p-6 bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl text-white overflow-hidden group">
+                           <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-125 transition-transform">
+                             <Percent className="w-16 h-16" />
+                           </div>
+                           <div className="relative z-10 flex flex-col h-full">
+                             <div className="flex items-center justify-between mb-4">
+                               <span className="px-3 py-1 bg-amber-500 rounded-lg text-[10px] font-black uppercase tracking-widest">{coupon.type}</span>
+                               <button onClick={() => handleDeleteCoupon(coupon.id)} className="p-2 text-white/50 hover:text-white transition-all"><X className="w-4 h-4" /></button>
+                             </div>
+                             <h4 className="text-2xl font-black font-mono tracking-tighter mb-1">{coupon.code}</h4>
+                             <p className="text-xs text-white/50 font-bold uppercase mb-4">{coupon.discount}% Off Global Discount</p>
+                             <div className="mt-auto pt-4 border-t border-white/10 flex items-center justify-between text-[10px] font-bold text-white/30 italic">
+                               <span>Added on: {new Date(coupon.createdAt).toLocaleDateString()}</span>
+                               <span>Active</span>
+                             </div>
+                           </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm">
+                    <h3 className="text-xl font-bold text-slate-900 mb-6">Create New Coupon</h3>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Coupon Code</label>
+                        <input 
+                          type="text" 
+                          placeholder="e.g. FLASH25"
+                          className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-black text-slate-900 placeholder:text-slate-300 focus:ring-2 focus:ring-amber-500/20 transition-all uppercase"
+                          value={newCoupon.code}
+                          onChange={e => setNewCoupon({...newCoupon, code: e.target.value})}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Discount Value (%)</label>
+                        <input 
+                          type="number" 
+                          className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-black text-slate-900 focus:ring-2 focus:ring-amber-500/20 transition-all"
+                          value={newCoupon.discount}
+                          onChange={e => setNewCoupon({...newCoupon, discount: Number(e.target.value)})}
+                        />
+                      </div>
+                      <button 
+                        onClick={handleCreateCoupon}
+                        className="w-full py-5 bg-amber-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs hover:bg-amber-600 transition-all shadow-xl shadow-amber-100 active:scale-95"
+                      >
+                        Launch Global Coupon
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {adminSubTab === 'settings' && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  {/* Commission Control */}
+                  <div className="lg:col-span-2 bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-8 opacity-5">
+                      <ShieldCheck className="w-32 h-32" />
+                    </div>
+                    
+                    <h3 className="text-2xl font-bold text-slate-900 font-sans mb-8">Category Commissions</h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {CATEGORIES.map(category => (
+                        <div key={category.id} className="p-6 bg-slate-50 rounded-[2rem] flex items-center justify-between group hover:bg-white hover:shadow-xl hover:shadow-slate-100 transition-all border border-transparent hover:border-amber-100">
+                          <div className="flex items-center gap-4">
+                            <div className={`w-12 h-12 rounded-2xl ${category.color} flex items-center justify-center`}>
+                              <category.icon className="w-6 h-6" />
+                            </div>
+                            <div>
+                              <p className="font-bold text-slate-900">{category.name}</p>
+                              <p className="text-xs text-slate-400 font-medium font-mono uppercase tracking-widest">{category.id}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <input 
+                              type="number" 
+                              min="0"
+                              max="100"
+                              className="w-20 p-3 bg-white border border-slate-200 rounded-xl font-bold text-center focus:ring-2 focus:ring-amber-500/20"
+                              value={categoryCommissions[category.id] ?? 10}
+                              onChange={(e) => setCategoryCommissions({...categoryCommissions, [category.id]: Number(e.target.value)})}
+                            />
+                            <span className="font-bold text-slate-400">%</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="mt-8 flex justify-end">
+                      <button 
+                        onClick={handleUpdateCommissions}
+                        disabled={isSubmitting}
+                        className="px-10 py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-amber-600 disabled:opacity-50 transition-all shadow-xl shadow-slate-200 flex items-center gap-2"
+                      >
+                        <Save className="w-5 h-5" /> 
+                        {isSubmitting ? 'সংরক্ষণ করা হচ্ছে...' : 'কমিশন সেভ করুন'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm">
+                    <h3 className="text-xl font-bold text-slate-900 mb-6">Platform Settings</h3>
+                    <div className="space-y-6">
+                       <div>
+                         <label className="text-xs font-bold text-slate-400 block mb-2">Maintenance Mode</label>
+                         <button className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded-xl font-bold text-xs">
+                           <X className="w-4 h-4" /> Disabled
+                         </button>
+                       </div>
+                       <div>
+                         <label className="text-xs font-bold text-slate-400 block mb-2">Auto-Approve Vendors</label>
+                         <button className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl font-bold text-xs">
+                           <CheckCircle2 className="w-4 h-4" /> Enabled
+                         </button>
+                       </div>
+                       <button className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold text-sm shadow-xl shadow-slate-200 mt-8">Save Master Settings</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {activeTab === 'vendor' && isVendor && (
+            <div className="space-y-8">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Total Sales</p>
+                  <p className="text-2xl font-black text-slate-900 mt-1">৳{(vendorOrders.reduce((acc, o) => acc + (o.totalAmount || 0), 0)).toLocaleString()}</p>
+                </div>
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Orders</p>
+                  <p className="text-2xl font-black text-slate-900 mt-1">{vendorOrders.length}</p>
+                </div>
+                <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
+                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Products</p>
+                  <p className="text-2xl font-black text-slate-900 mt-1">{vendorProducts.length}</p>
+                </div>
+                <div className="bg-amber-500 p-6 rounded-3xl text-white shadow-xl shadow-amber-100">
+                  <p className="text-xs font-bold text-white/70 uppercase tracking-widest">Review Score</p>
+                  <p className="text-2xl font-black text-white mt-1">4.8/5.0</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                {/* Sales Analytics */}
+                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                  <div className="flex items-center justify-between mb-8">
+                    <h3 className="text-xl font-bold text-slate-900">Sales Analytics</h3>
+                    <select className="text-xs font-bold border-none bg-slate-50 rounded-lg p-2 focus:ring-0">
+                      <option>Last 7 Days</option>
+                      <option>Last 30 Days</option>
+                    </select>
+                  </div>
+                  <div className="h-[300px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={MOCK_SALES_DATA}>
+                        <defs>
+                          <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} />
+                        <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} />
+                        <Tooltip 
+                          contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                        />
+                        <Area type="monotone" dataKey="sales" stroke="#f59e0b" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Recent Orders Short View */}
+                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden flex flex-col">
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-xl font-bold text-slate-900">Recent Orders</h3>
+                    <button onClick={() => setActiveTab('store_orders')} className="text-xs font-bold text-amber-600 hover:underline">View All</button>
+                  </div>
+                  <div className="space-y-4 flex-1">
+                    {vendorOrders.slice(0, 3).map((order) => (
+                      <div key={order.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400">
+                            <Package className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-slate-900">Order #{order.id.slice(-6).toUpperCase()}</p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase">{order.status}</p>
+                          </div>
+                        </div>
+                        <p className="font-bold text-slate-900">৳{order.totalAmount}</p>
+                      </div>
+                    ))}
+                    {vendorOrders.length === 0 && (
+                      <p className="text-center py-8 text-slate-400 text-sm font-medium">No orders yet</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Recent Messages for Vendor */}
+                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm flex flex-col">
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-xl font-bold text-slate-900">Recent Messages</h3>
+                    <button onClick={() => setActiveTab('messages')} className="text-xs font-bold text-amber-600 hover:underline">All Messages</button>
+                  </div>
+                  <div className="space-y-4 flex-1 overflow-y-auto max-h-[400px]">
+                    {allChats.slice(0, 5).map((chat) => (
+                      <div 
+                        key={chat.id} 
+                        onClick={() => {
+                          setSelectedChat(chat);
+                          setActiveTab('messages');
+                        }}
+                        className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl hover:bg-amber-50 cursor-pointer transition-all group border border-transparent shadow-sm hover:shadow-md"
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-400 group-hover:text-amber-500 shadow-sm transition-all">
+                            <MessageSquare className="w-5 h-5" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-bold text-slate-900 truncate">
+                              {chat.vendorId === auth.currentUser?.uid ? (chat.customerName || 'Customer') : (chat.vendorName || 'Seller')}
+                            </p>
+                            <p className="text-[10px] text-slate-400 font-bold truncate max-w-full italic">{chat.lastMessage || 'Click to reply'}</p>
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">
+                            {chat.lastMessageTime?.toDate ? chat.lastMessageTime.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                          </span>
+                          <button className="text-[10px] font-black text-amber-600 uppercase tracking-widest bg-white px-3 py-1.5 rounded-lg shadow-sm border border-slate-100 group-hover:bg-amber-500 group-hover:text-white group-hover:border-amber-500 transition-all active:scale-95">
+                            Reply
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {allChats.length === 0 && (
+                      <div className="text-center py-8 space-y-2">
+                        <p className="text-slate-400 text-sm font-medium">No messages yet</p>
+                        <p className="text-[10px] text-slate-300">Customers will contact you from product pages</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+                {/* Quick Actions */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  <button 
+                    onClick={() => {
+                      resetProductForm();
+                      setShowAddProduct(true);
+                    }}
+                    className="p-8 bg-slate-900 text-white rounded-[2rem] flex flex-col items-center text-center gap-4 hover:bg-amber-600 transition-all shadow-xl group"
+                  >
+                    <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <Plus className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold">Add Product</h4>
+                      <p className="text-xs text-white/60">List new items</p>
+                    </div>
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('messages')}
+                    className="p-8 bg-amber-500 text-white rounded-[2rem] flex flex-col items-center text-center gap-4 hover:bg-slate-900 transition-all shadow-xl shadow-amber-200 group"
+                  >
+                    <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <MessageSquare className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold">Reply to Messages</h4>
+                      <p className="text-xs text-white/80">Check customer inquiries</p>
+                    </div>
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('store')}
+                    className="p-8 bg-white border border-slate-100 rounded-[2rem] flex flex-col items-center text-center gap-4 hover:border-amber-200 transition-all shadow-sm group"
+                  >
+                    <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <Store className="w-6 h-6 text-slate-900" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold">Store Settings</h4>
+                      <p className="text-xs text-slate-500">Appearance</p>
+                    </div>
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab('wallet')}
+                    className="p-8 bg-white border border-slate-100 rounded-[2rem] flex flex-col items-center text-center gap-4 hover:border-amber-200 transition-all shadow-sm group"
+                  >
+                    <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <CreditCard className="w-6 h-6 text-slate-900" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold">Wallet</h4>
+                      <p className="text-xs text-slate-500">Earnings</p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )}
+
+          {activeTab === 'overview' && (
+            <div className="space-y-8">
+              {/* Stats Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                  <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">Total Balance</p>
+                  <p className="text-4xl font-black text-slate-900 mt-2">৳{profile?.walletBalance?.toLocaleString() || 0}</p>
+                  <button 
+                    onClick={handleRechargeWallet}
+                    className="mt-4 text-xs font-bold text-amber-600 hover:underline"
+                  >
+                    Recharge Wallet →
+                  </button>
+                </div>
+                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                  <p className="text-sm font-bold text-slate-500 uppercase tracking-widest">Active Orders</p>
+                  <p className="text-4xl font-black text-slate-900 mt-2">03</p>
+                  <button className="mt-4 text-xs font-bold text-amber-600 hover:underline">Track Shipments →</button>
+                </div>
+                <div className="bg-amber-500 p-8 rounded-[2.5rem] border border-amber-600 shadow-xl shadow-amber-200 text-white">
+                  <p className="text-sm font-bold text-white/70 uppercase tracking-widest">Rewards Points</p>
+                  <p className="text-4xl font-black text-white mt-2">1,250</p>
+                  <button className="mt-4 text-xs font-bold text-white hover:underline">Redeem Now →</button>
+                </div>
+              </div>
+
+              {/* Become a Vendor Promo for Customers */}
+              {!isVendor && (
+                <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-10 rounded-[2.5rem] text-white flex flex-col md:flex-row items-center justify-between gap-8">
+                  <div className="space-y-4">
+                    <h3 className="text-3xl font-black font-sans leading-tight">ভেন্ডর হিসেবে ব্যবসা শুরু করুন</h3>
+                    <p className="text-slate-300 max-w-md font-medium">
+                      Ek-Thikana তে আপনার পণ্য বিশ্বের কাছে পৌঁছে দিন। সহজ রেজিস্ট্রেশন ও দ্রুত পেমেন্ট সুবিধা।
+                    </p>
+                    <div className="flex flex-wrap gap-4">
+                      <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
+                        <CheckCircle2 className="w-4 h-4" /> ০% কমিশন (১ মাস)
+                      </div>
+                      <div className="flex items-center gap-2 text-xs font-bold text-amber-400">
+                        <CheckCircle2 className="w-4 h-4" /> ২৪/৭ সাপোর্ট
+                      </div>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setActiveTab('profile')}
+                    className="bg-amber-500 text-slate-900 px-10 py-5 rounded-2xl font-black hover:bg-amber-400 transition-all shadow-xl shadow-amber-900/20 active:scale-95 whitespace-nowrap"
+                  >
+                    ভেন্ডর হতে রিকোয়েস্ট করুন
+                  </button>
+                </div>
+              )}
+
+              {/* Vendor Analytics (if applicable) */}
+              {isVendor && (
+                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm space-y-8">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-2xl font-bold text-slate-900 font-sans">Earning Analytics</h3>
+                      <p className="text-slate-500 text-sm">Sales performance of the last 7 days</p>
+                    </div>
+                    <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-600">
+                      Last 7 Days <Clock className="w-3.5 h-3.5" />
+                    </div>
+                  </div>
+                  
+                  <div className="h-[300px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={MOCK_SALES_DATA}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                        <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} dy={10} />
+                        <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} />
+                        <Tooltip 
+                          contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}}
+                          itemStyle={{fontWeight: 'bold', color: '#f59e0b'}}
+                        />
+                        <Line type="monotone" dataKey="sales" stroke="#f59e0b" strokeWidth={4} dot={{r: 6, fill: '#f59e0b', strokeWidth: 2, stroke: '#fff'}} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              )}
+
+              {/* Recent Orders Table */}
+              <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden">
+                <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+                  <h3 className="text-2xl font-bold text-slate-900 font-sans">Recent Orders</h3>
+                  <button 
+                    onClick={() => setActiveTab('orders')}
+                    className="text-amber-600 font-bold text-sm hover:underline"
+                  >
+                    View All
+                  </button>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-500 text-xs font-bold uppercase tracking-widest">
+                        <th className="px-8 py-4">Order ID</th>
+                        <th className="px-8 py-4">Product</th>
+                        <th className="px-8 py-4">Total</th>
+                        <th className="px-8 py-4">Status</th>
+                        <th className="px-8 py-4">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {[1, 2, 3].map((i) => (
+                        <tr key={i} className="hover:bg-slate-50 transition-all">
+                          <td className="px-8 py-6 font-mono text-xs text-slate-500">#ET-2026-880{i}</td>
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 bg-slate-100 rounded-xl"></div>
+                              <span className="font-bold text-slate-900">Premium Hilsha Fish</span>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6 font-bold text-slate-900">৳2,450</td>
+                          <td className="px-8 py-6">
+                            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 text-amber-600 rounded-full text-[10px] font-bold uppercase">
+                              <Truck className="w-3 h-3" /> In Transit
+                            </span>
+                            <AnimatePresence>
+                              {trackingOrderId === `ET-2026-880${i}` && (
+                                <motion.div 
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: 'auto', opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  className="mt-2 p-3 bg-blue-50/50 border border-blue-100 rounded-xl text-[10px]"
+                                >
+                                  <p className="font-bold text-blue-900">Carrier: RedX Logistics</p>
+                                  <p className="text-blue-700 font-mono">Trace: RX-{82930 + i}45BD</p>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-2">
+                              <button 
+                                onClick={() => setTrackingOrderId(`ET-2026-880${i}`)}
+                                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                                title="Track Order"
+                              >
+                                <Truck className="w-5 h-5" />
+                              </button>
+                              <button 
+                                onClick={() => handleDownloadInvoice(`880${i}`)}
+                                className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
+                                title="Download Invoice"
+                              >
+                                <Download className="w-5 h-5" />
+                              </button>
+                              <button 
+                                onClick={() => setShowQR(`ORDER-880${i}`)}
+                                className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
+                                title="Show QR Code"
+                              >
+                                <QrCode className="w-5 h-5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'products' && isVendor && (
+            <div className="space-y-8">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-3xl font-bold text-slate-900 font-sans">Product Management</h2>
+                  <p className="text-slate-500">Manage your store's inventory and listings</p>
+                </div>
+                <button 
+                  onClick={() => {
+                    resetProductForm();
+                    setShowAddProduct(true);
+                  }}
+                  className="bg-slate-900 text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-amber-600 transition-all shadow-lg active:scale-95"
+                >
+                  <Plus className="w-5 h-5" /> Add New Product
+                </button>
+              </div>
+
+              {/* Product Filters */}
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex-1 min-w-[300px] relative">
+                  <input type="text" placeholder="Search products..." className="w-full pl-12 pr-4 py-3 bg-white border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/10" />
+                  <Search className="absolute left-4 top-3.5 w-5 h-5 text-slate-400" />
+                </div>
+                <button className="px-6 py-3 bg-white border border-slate-100 rounded-2xl font-bold text-slate-600 hover:bg-slate-50 flex items-center gap-2">
+                  <Filter className="w-4 h-4" /> Category: All
+                </button>
+              </div>
+
+              {/* Product List */}
+              <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-500 text-xs font-bold uppercase tracking-widest">
+                        <th className="px-8 py-4">Product Info</th>
+                        <th className="px-8 py-4">Price</th>
+                        <th className="px-8 py-4">Stock</th>
+                        <th className="px-8 py-4">Status</th>
+                        <th className="px-8 py-4">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {vendorProducts.length > 0 ? vendorProducts.map((p) => (
+                        <tr key={p.id} className="hover:bg-slate-50 transition-all">
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-4">
+                              <img src={p.images?.[0] || 'https://via.placeholder.com/150'} className="w-12 h-12 rounded-2xl object-cover" referrerPolicy="no-referrer" />
+                              <div>
+                                <p className="font-bold text-slate-900">{p.name}</p>
+                                <p className="text-xs text-slate-400 font-bold uppercase">{p.category}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6 font-bold text-slate-900">৳{p.price}</td>
+                          <td className="px-8 py-6">
+                            <div className="flex flex-col gap-2">
+                              <span className={`px-3 py-1 rounded-full text-[10px] font-bold text-center ${p.stock < 15 ? 'bg-amber-50 text-amber-600' : 'bg-green-50 text-green-600'}`}>
+                                {p.stock} {p.unit} left
+                              </span>
+                              <div className="flex items-center gap-1 justify-center">
+                                <button 
+                                  onClick={() => handleUpdateStock(p.id, p.stock, -1)}
+                                  className="w-6 h-6 bg-red-50 text-red-600 rounded flex items-center justify-center font-bold text-sm hover:bg-red-100"
+                                  title="Stock Out (-1)"
+                                >
+                                  -
+                                </button>
+                                <button 
+                                  onClick={() => handleUpdateStock(p.id, p.stock, 1)}
+                                  className="w-6 h-6 bg-green-50 text-green-600 rounded flex items-center justify-center font-bold text-sm hover:bg-green-100"
+                                  title="Stock In (+1)"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            {p.approved ? (
+                              <span className="flex items-center gap-1.5 text-xs font-bold text-green-600">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Live
+                              </span>
+                            ) : (
+                              <span className="flex items-center gap-1.5 text-xs font-bold text-amber-500">
+                                <Clock className="w-3.5 h-3.5" /> Pending Review
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-2">
+                              <button 
+                                onClick={() => {
+                                  setEditingProduct(p);
+                                  setNewProduct({
+                                    name: p.name,
+                                    price: p.price.toString(),
+                                    discountPrice: (p as any).discountPrice?.toString() || '',
+                                    isFlashSale: (p as any).isFlashSale || false,
+                                    stock: p.stock.toString(),
+                                    category: p.category,
+                                    subCategory: (p as any).subCategory || '',
+                                    description: (p as any).description || '',
+                                    unit: p.unit,
+                                    images: p.images || []
+                                  });
+                                  setShowAddProduct(true);
+                                }}
+                                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all" 
+                                title="Edit"
+                              >
+                                <Edit className="w-4 h-4" />
+                              </button>
+                              <button 
+                                onClick={() => handleDeleteProduct(p.id)}
+                                className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all" 
+                                title="Delete"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td colSpan={5} className="px-8 py-12 text-center text-slate-400">
+                            কোনো পণ্য পাওয়া যায়নি।
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'orders' && (
+            <div className="space-y-8">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-3xl font-bold text-slate-900 font-sans">
+                    My Purchases
+                  </h2>
+                  <p className="text-slate-500">Track and manage your orders as a customer</p>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-500 text-xs font-bold uppercase tracking-widest">
+                        <th className="px-8 py-4">Order ID</th>
+                        <th className="px-8 py-4">Total</th>
+                        <th className="px-8 py-4">Status</th>
+                        <th className="px-8 py-4">Date</th>
+                        <th className="px-8 py-4">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {customerOrders.length > 0 ? customerOrders.map((o: any) => (
+                        <tr key={o.id} className="hover:bg-slate-50 transition-all">
+                          <td className="px-8 py-6">
+                            <p className="font-mono text-xs text-slate-900 font-bold uppercase">#{o.id.slice(-8)}</p>
+                          </td>
+                          <td className="px-8 py-6 font-bold text-slate-900">৳{o.totalAmount}</td>
+                          <td className="px-8 py-6">
+                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase ${
+                              o.status === 'delivered' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+                            }`}>
+                              <Truck className="w-3 h-3" /> {o.status}
+                            </span>
+                          </td>
+                          <td className="px-8 py-6 text-xs text-slate-500 font-medium">
+                            {new Date(o.createdAt).toLocaleDateString()}
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-2">
+                              <button 
+                                onClick={() => setTrackingOrderId(o.id)}
+                                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                                title="Track Order"
+                              >
+                                <Truck className="w-5 h-5" />
+                              </button>
+                              <button 
+                                onClick={() => handleDownloadInvoice(o.id)}
+                                className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
+                              >
+                                <Download className="w-5 h-5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td colSpan={5} className="px-8 py-12 text-center text-slate-400">
+                            কোনো অর্ডার পাওয়া যায়নি।
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'store_orders' && isVendor && (
+            <div className="space-y-8">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-3xl font-bold text-slate-900 font-sans">
+                    Store Orders
+                  </h2>
+                  <p className="text-slate-500">Monitor and update status for orders from your customers</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {['all', 'pending', 'shipped', 'delivered'].map((s) => (
+                    <button 
+                      key={s}
+                      onClick={() => toast(`ফিল্টার শীঘ্রই আসছে: ${s}`, { icon: '🔍' })}
+                      className="px-4 py-2 rounded-xl text-xs font-bold capitalize bg-white border border-slate-100 text-slate-500 hover:border-amber-200"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-500 text-xs font-bold uppercase tracking-widest">
+                        <th className="px-8 py-4">ID & Customer</th>
+                        <th className="px-8 py-4">Amount</th>
+                        <th className="px-8 py-4">Status</th>
+                        <th className="px-8 py-4">Placed At</th>
+                        <th className="px-8 py-4">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {vendorOrders.length > 0 ? vendorOrders.map((o: any) => (
+                        <tr key={o.id} className="hover:bg-slate-50 transition-all">
+                          <td className="px-8 py-6">
+                            <p className="font-mono text-xs text-slate-400">#{o.id.slice(-8).toUpperCase()}</p>
+                            <p className="font-bold text-slate-900">Customer: {o.customerId.slice(0, 8)}</p>
+                          </td>
+                          <td className="px-8 py-6 font-bold text-slate-900">৳{o.totalAmount}</td>
+                          <td className="px-8 py-6">
+                            <select 
+                              defaultValue={o.status}
+                              onChange={(e) => handleUpdateOrderStatus(o.id, e.target.value)}
+                              className="text-[10px] font-bold uppercase px-3 py-1.5 rounded-full bg-slate-50 border border-slate-100 focus:outline-none focus:ring-2 focus:ring-amber-500/20 cursor-pointer"
+                            >
+                              <option value="pending">Pending</option>
+                              <option value="shipped">Shipped</option>
+                              <option value="delivered">Delivered</option>
+                              <option value="cancelled">Cancelled</option>
+                            </select>
+                          </td>
+                          <td className="px-8 py-6 text-xs text-slate-500 font-medium">
+                            <div className="flex items-center gap-1.5">
+                              <Clock className="w-3.5 h-3.5" /> {new Date(o.createdAt).toLocaleDateString()}
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-2">
+                              <button 
+                                onClick={() => handleUpdateOrderStatus(o.id, 'delivered')}
+                                className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                                title="Mark as Delivered"
+                                id={`deliver-${o.id}`}
+                              >
+                                <CheckCircle2 className="w-5 h-5" />
+                              </button>
+                              <button 
+                                onClick={() => handleContactCustomer(o.customerId)}
+                                className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
+                                title="Message Customer"
+                                id={`contact-${o.id}`}
+                              >
+                                <MessageSquare className="w-5 h-5" />
+                              </button>
+                              <button 
+                                onClick={() => setTrackingOrderId(o.id)}
+                                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                                title="Track Order"
+                                id={`track-${o.id}`}
+                              >
+                                <Truck className="w-5 h-5" />
+                              </button>
+                              <button 
+                                onClick={() => handleDownloadInvoice(o.id)}
+                                className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-all"
+                                id={`invoice-${o.id}`}
+                              >
+                                <Download className="w-5 h-5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )) : (
+                        <tr>
+                          <td colSpan={5} className="px-8 py-12 text-center text-slate-400">
+                            কোনো অর্ডার পাওয়া যায়নি।
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'notifications' && (
+            <div className="space-y-8">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-3xl font-bold text-slate-900 font-sans">Notifications</h2>
+                  <p className="text-slate-500">Stay updated with your account activity</p>
+                </div>
+                {unreadNotificationsCount > 0 && (
+                  <button 
+                    onClick={() => {
+                      notifications.filter(n => !n.read).forEach(n => markNotificationAsRead(n.id));
+                      toast.success('সব নোটিফিকেশন পড়া হয়েছে');
+                    }}
+                    className="text-xs font-bold text-amber-600 hover:underline"
+                  >
+                    Mark all as read
+                  </button>
+                )}
+              </div>
+
+              <div className="space-y-4">
+                {notifications.length > 0 ? notifications.map((notif) => (
+                  <div 
+                    key={notif.id}
+                    onClick={() => {
+                      if (!notif.read) markNotificationAsRead(notif.id);
+                      if (notif.link) {
+                         // Extract tab from link if it's like #tab
+                         const tab = notif.link.replace('#', '');
+                         if (tab) setActiveTab(tab);
+                      }
+                    }}
+                    className={`p-6 rounded-[2rem] border transition-all cursor-pointer flex items-start gap-4 ${
+                      notif.read ? 'bg-white border-slate-100 opacity-75' : 'bg-white border-amber-200 shadow-md ring-1 ring-amber-100'
+                    }`}
+                  >
+                    <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                      notif.type === 'order' ? 'bg-blue-50 text-blue-600' :
+                      notif.type === 'wallet' ? 'bg-emerald-50 text-emerald-600' :
+                      notif.type === 'vendor' ? 'bg-purple-50 text-purple-600' :
+                      'bg-slate-50 text-slate-600'
+                    }`}>
+                      {notif.type === 'order' ? <Package className="w-6 h-6" /> :
+                       notif.type === 'wallet' ? <CreditCard className="w-6 h-6" /> :
+                       notif.type === 'vendor' ? <Store className="w-6 h-6" /> :
+                       <Bell className="w-6 h-6" />}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between mb-1">
+                        <h4 className="font-bold text-slate-900">{notif.title}</h4>
+                        <span className="text-[10px] font-bold text-slate-400">
+                           {notif.createdAt && new Date(notif.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-500">{notif.message}</p>
+                    </div>
+                    {!notif.read && (
+                      <div className="w-2 h-2 bg-amber-500 rounded-full mt-2" />
+                    )}
+                  </div>
+                )) : (
+                  <div className="bg-white p-20 rounded-[3rem] border border-slate-100 flex flex-col items-center justify-center text-center space-y-4">
+                    <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center text-slate-200">
+                      <Bell className="w-10 h-10" />
+                    </div>
+                    <p className="text-slate-400 font-medium">No notifications yet</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'profile' && (
+            <div className="space-y-8">
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                <h3 className="text-2xl font-bold text-slate-900 mb-6 font-sans">Account Settings</h3>
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-500 uppercase tracking-widest">Full Name</label>
+                      <input 
+                        type="text" 
+                        className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                        value={settingsData.name}
+                        onChange={(e) => setSettingsData({...settingsData, name: e.target.value})}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-500 uppercase tracking-widest">Email Address</label>
+                      <input type="text" className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl" defaultValue={profile?.email} disabled />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-500 uppercase tracking-widest">Shipping Address</label>
+                    <textarea 
+                      className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl min-h-[120px]" 
+                      placeholder="Enter your default shipping address..." 
+                      value={settingsData.address}
+                      onChange={(e) => setSettingsData({...settingsData, address: e.target.value})}
+                    />
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-4">
+                    <button 
+                      onClick={handleUpdateProfile}
+                      className="bg-slate-900 text-white px-8 py-4 rounded-2xl font-bold hover:bg-amber-600 transition-all active:scale-95 shadow-lg"
+                    >
+                      Update Profile
+                    </button>
+                    {profile?.role === 'customer' && (
+                      <button 
+                        onClick={async () => {
+                          if (!confirm('আপনি কি ভেন্ডর হিসেবে রেজিস্টার করতে চান?')) return;
+                          setIsSubmitting(true);
+                          try {
+                            const uid = auth.currentUser?.uid;
+                            if (!uid) return;
+                            
+                            // 1. Create vendor doc
+                            await setDoc(doc(db, 'vendors', uid), {
+                              vendorId: uid,
+                              storeName: profile.name + "'s Store",
+                              verified: false,
+                              totalSales: 0,
+                              rating: 0,
+                              joinedAt: new Date().toISOString()
+                            });
+
+                            // 2. Update user role
+                            await updateDoc(doc(db, 'users', uid), { role: 'vendor' });
+                            
+                            toast.success('আপনি এখন একজন ভেন্ডর! পেজটি রিফ্রেশ করুন।');
+                            window.location.reload();
+                          } catch (err: any) {
+                            toast.error('ভেন্ডর হতে সমস্যা হয়েছে: ' + err.message);
+                          } finally {
+                            setIsSubmitting(false);
+                          }
+                        }}
+                        disabled={isSubmitting}
+                        className="bg-amber-500 text-slate-900 px-8 py-4 rounded-2xl font-bold hover:bg-amber-400 transition-all active:scale-95 shadow-lg flex items-center gap-2"
+                      >
+                        <Store className="w-5 h-5" /> Become a Vendor
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          {activeTab === 'store' && isVendor && (
+            <div className="space-y-8">
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                <h3 className="text-2xl font-bold text-slate-900 mb-6 font-sans">Storefront Settings</h3>
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-500 uppercase tracking-widest">Store Name</label>
+                      <input 
+                        type="text" 
+                        className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                        value={storeData.storeName}
+                        onChange={(e) => setStoreData({...storeData, storeName: e.target.value})}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-500 uppercase tracking-widest">Store Status</label>
+                      <div className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl flex items-center gap-2 text-slate-400">
+                        {vendorProfile?.verified ? (
+                          <>
+                            <CheckCircle2 className="w-4 h-4 text-green-600" />
+                            <span className="text-sm font-bold text-green-600 uppercase">Verified Merchant</span>
+                          </>
+                        ) : (
+                          <>
+                            <Clock className="w-4 h-4 text-amber-500" />
+                            <span className="text-sm font-bold text-amber-500 uppercase">Unverified</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-500 uppercase tracking-widest">Store Description</label>
+                      <textarea 
+                        className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl min-h-[120px]" 
+                        placeholder="Tell customers about your shop..." 
+                        value={storeData.description}
+                        onChange={(e) => setStoreData({...storeData, description: e.target.value})}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-500 uppercase tracking-widest">Store Address</label>
+                      <textarea 
+                        className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl min-h-[80px]" 
+                        placeholder="Full physical address of your store..." 
+                        value={storeData.storeAddress}
+                        onChange={(e) => setStoreData({...storeData, storeAddress: e.target.value})}
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="space-y-2">
+                        <label className="text-sm font-bold text-slate-500 uppercase tracking-widest">Contact Person</label>
+                        <input 
+                          type="text" 
+                          className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                          value={storeData.contactPerson}
+                          onChange={(e) => setStoreData({...storeData, contactPerson: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-bold text-slate-500 uppercase tracking-widest">Contact Phone</label>
+                        <input 
+                          type="text" 
+                          className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                          value={storeData.contactPhone}
+                          onChange={(e) => setStoreData({...storeData, contactPhone: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-bold text-slate-500 uppercase tracking-widest">Contact Email</label>
+                        <input 
+                          type="email" 
+                          className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                          value={storeData.contactEmail}
+                          onChange={(e) => setStoreData({...storeData, contactEmail: e.target.value})}
+                        />
+                      </div>
+                    </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-500 uppercase tracking-widest">Store Logo</label>
+                      <label className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200 cursor-pointer overflow-hidden relative h-16">
+                        {storeData.storeLogo ? (
+                          <img src={storeData.storeLogo} className="absolute inset-0 w-full h-full object-contain bg-white" />
+                        ) : (
+                          <>
+                            <Plus className="w-5 h-5 text-slate-400" />
+                            <span className="text-xs text-slate-400 font-bold uppercase">Upload New Logo</span>
+                          </>
+                        )}
+                        <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, 'logo')} />
+                      </label>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-500 uppercase tracking-widest">Store Banner</label>
+                      <label className="flex items-center gap-4 p-4 bg-slate-50 rounded-2xl border border-dashed border-slate-200 cursor-pointer overflow-hidden relative h-16">
+                        {storeData.storeBanner ? (
+                          <img src={storeData.storeBanner} className="absolute inset-0 w-full h-full object-cover" />
+                        ) : (
+                          <>
+                            <Plus className="w-5 h-5 text-slate-400" />
+                            <span className="text-xs text-slate-400 font-bold uppercase">Upload New Banner</span>
+                          </>
+                        )}
+                        <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, 'banner')} />
+                      </label>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={handleUpdateStorefront}
+                    disabled={isSubmitting}
+                    className="bg-slate-900 text-white px-8 py-4 rounded-2xl font-bold hover:bg-amber-600 transition-all active:scale-95 shadow-lg disabled:opacity-50"
+                  >
+                    {isSubmitting ? 'সেভ হচ্ছে...' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          {activeTab === 'wallet' && (
+            <div className="space-y-8">
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                <div className="flex items-center justify-between mb-8">
+                  <h3 className="text-2xl font-bold text-slate-900 font-sans">
+                    {isVendor ? 'Wallet & Withdrawals' : 'Wallet & Balance'}
+                  </h3>
+                  <div className="flex gap-4">
+                    {!isVendor && (
+                      <button 
+                        onClick={() => toast('শীঘ্রই আসছে: সরাসরি রিচার্জ সুবিধা।', { icon: '💳' })}
+                        className="bg-amber-500 text-white px-6 py-3 rounded-2xl font-bold hover:bg-amber-600 transition-all active:scale-95 shadow-lg"
+                      >
+                        Recharge Wallet
+                      </button>
+                    )}
+                    {isVendor && (
+                      <button 
+                        onClick={handleRequestWithdrawal}
+                        className="bg-slate-900 text-white px-6 py-3 rounded-2xl font-bold hover:bg-amber-600 transition-all active:scale-95 shadow-lg"
+                      >
+                        Request Withdrawal
+                      </button>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                  <div className="p-8 bg-slate-50 rounded-[2rem] border border-slate-100">
+                    <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">
+                      {isVendor ? 'Withdrawable Balance' : 'Current Balance'}
+                    </p>
+                    <p className="text-4xl font-black text-slate-900 mt-2">৳{(profile?.walletBalance || 0).toLocaleString()}</p>
+                    {isVendor && (
+                      <p className="text-xs text-green-600 font-bold mt-2 flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" /> Minimum ৳500 required
+                      </p>
+                    )}
+                  </div>
+                  {isVendor && (
+                    <div className="p-8 bg-amber-50 rounded-[2rem] border border-amber-100">
+                      <p className="text-xs text-amber-700/60 font-bold uppercase tracking-widest">Last Withdrawal</p>
+                      <p className="text-4xl font-black text-amber-900 mt-2">৳৮,৫০০</p>
+                      <p className="text-xs text-amber-700 font-bold mt-2">Paid on 12 April 2026</p>
+                    </div>
+                  )}
+                  {!isVendor && (
+                    <div className="p-8 bg-blue-50 rounded-[2rem] border border-blue-100">
+                      <p className="text-xs text-blue-700/60 font-bold uppercase tracking-widest">Total Reward Points</p>
+                      <p className="text-4xl font-black text-blue-900 mt-2">1,250</p>
+                      <p className="text-xs text-blue-700 font-bold mt-2">Redeemable for discounts</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Stored Cards Section */}
+                <div className="mb-12 space-y-6">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-lg font-bold text-slate-900 font-sans">সংরক্ষিত কার্ডসমূহ</h4>
+                    <button 
+                      onClick={() => setShowAddCard(true)}
+                      className="text-xs font-bold text-amber-600 flex items-center gap-1 hover:underline"
+                    >
+                      <Plus className="w-3 h-3" /> Add New Card
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {savedCards.map((card) => (
+                      <div key={card.id} className="p-6 bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl text-white relative overflow-hidden group border border-slate-700 shadow-xl">
+                        <div className="relative z-10">
+                          <div className="flex justify-between items-start mb-10">
+                            <img 
+                              src={card.type === 'visa' 
+                                ? "https://upload.wikimedia.org/wikipedia/commons/thumb/a/a4/Visa_2021.svg/1200px-Visa_2021.svg.png" 
+                                : "https://upload.wikimedia.org/wikipedia/commons/thumb/2/2a/Mastercard-logo.svg/1280px-Mastercard-logo.svg.png"
+                              } 
+                              className="h-4 brightness-200" 
+                              referrerPolicy="no-referrer" 
+                            />
+                            <div className="w-10 h-8 bg-amber-500/20 rounded-lg flex items-center justify-center border border-amber-500/30">
+                              <CreditCard className="w-5 h-5 text-amber-500" />
+                            </div>
+                          </div>
+                          <p className="text-lg font-mono tracking-[0.2em] mb-4">{card.number}</p>
+                          <div className="flex justify-between items-end">
+                            <div>
+                              <p className="text-[8px] text-slate-400 uppercase font-black tracking-widest">Card Holder</p>
+                              <p className="text-sm font-bold uppercase">{card.holder}</p>
+                            </div>
+                            <p className="text-xs font-mono">{card.expiry}</p>
+                          </div>
+                        </div>
+                        <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-white/5 rounded-full blur-3xl group-hover:bg-amber-500/10 transition-colors"></div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Add Card Modal */}
+                <AnimatePresence>
+                  {showAddCard && (
+                    <div className="fixed inset-0 flex items-center justify-center z-[300] p-4">
+                      <motion.div 
+                        initial={{ opacity: 0 }} 
+                        animate={{ opacity: 1 }} 
+                        exit={{ opacity: 0 }}
+                        onClick={() => setShowAddCard(false)}
+                        className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+                      />
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.9 }}
+                        className="relative bg-white w-full max-w-md rounded-[3rem] shadow-2xl p-8"
+                      >
+                        <div className="flex items-center justify-between mb-8">
+                          <h3 className="text-xl font-bold text-slate-900 uppercase">নতুন কার্ড যুক্ত করুন</h3>
+                          <button onClick={() => setShowAddCard(false)} className="p-2 bg-slate-50 rounded-xl">
+                            <X className="w-5 h-5 text-slate-400" />
+                          </button>
+                        </div>
+                        <div className="space-y-4 mb-8">
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Card Number</label>
+                            <input 
+                              type="text" 
+                              className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-amber-500/20 font-mono"
+                              placeholder="0000 0000 0000 0000"
+                              value={newCard.number}
+                              onChange={(e) => setNewCard({...newCard, number: e.target.value})}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Card Holder</label>
+                            <input 
+                              type="text" 
+                              className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-amber-500/20"
+                              placeholder="FULL NAME"
+                              value={newCard.holder}
+                              onChange={(e) => setNewCard({...newCard, holder: e.target.value})}
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Expiry</label>
+                              <input 
+                                type="text" 
+                                className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-amber-500/20"
+                                placeholder="MM/YY"
+                                value={newCard.expiry}
+                                onChange={(e) => setNewCard({...newCard, expiry: e.target.value})}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[10px] font-bold text-slate-400 uppercase ml-1">Type</label>
+                              <select 
+                                className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-amber-500/20"
+                                value={newCard.type}
+                                onChange={(e) => setNewCard({...newCard, type: e.target.value})}
+                              >
+                                <option value="visa">Visa</option>
+                                <option value="mastercard">Mastercard</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={handleAddCard}
+                          className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-amber-600 transition-all shadow-xl"
+                        >
+                          কার্ড সেভ করুন
+                        </button>
+                      </motion.div>
+                    </div>
+                  )}
+                </AnimatePresence>
+
+                <div className="bg-white rounded-3xl border border-slate-100 overflow-hidden">
+                  <div className="p-6 border-b border-slate-50">
+                    <h4 className="font-bold text-slate-900">Transaction History</h4>
+                  </div>
+                  <div className="p-4 space-y-4">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="flex items-center justify-between p-4 bg-slate-50/50 rounded-2xl hover:bg-slate-50 transition-all">
+                        <div className="flex items-center gap-4">
+                          <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center border border-slate-100 italic font-serif text-slate-400">
+                            ৳
+                          </div>
+                          <div>
+                            <p className="font-bold text-slate-900">Withdrawal Request</p>
+                            <p className="text-[10px] text-slate-400 font-bold uppercase">Via bKash • #TRN-1002{i}</p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-bold text-slate-900">-৳২,০০০</p>
+                          <p className="text-[10px] text-green-600 font-bold uppercase">Completed</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          {activeTab === 'verification' && isVendor && (
+            <div className="space-y-8">
+              <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm">
+                <div className="flex items-center gap-4 mb-8">
+                  <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-bold text-slate-900 font-sans">Verification & identity</h2>
+                    <p className="text-slate-500 text-sm">Verify your business identity to enable payouts</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  {/* Bank Account Info */}
+                  <div className="space-y-6">
+                    <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                      <CreditCard className="w-4 h-4" /> Bank Account Details
+                    </h3>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">Account Holder Name</label>
+                        <input 
+                          type="text" 
+                          className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                          placeholder="Enter full name"
+                          value={verificationData.bankAccount.accountName}
+                          onChange={(e) => setVerificationData({
+                            ...verificationData, 
+                            bankAccount: {...verificationData.bankAccount, accountName: e.target.value}
+                          })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">Account Number</label>
+                        <input 
+                          type="text" 
+                          className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                          placeholder="0000 0000 0000"
+                          value={verificationData.bankAccount.accountNumber}
+                          onChange={(e) => setVerificationData({
+                            ...verificationData, 
+                            bankAccount: {...verificationData.bankAccount, accountNumber: e.target.value}
+                          })}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-500 uppercase ml-1">Bank Name</label>
+                          <select 
+                            className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20 appearance-none"
+                            value={verificationData.bankAccount.bankName}
+                            onChange={(e) => setVerificationData({
+                              ...verificationData, 
+                              bankAccount: {...verificationData.bankAccount, bankName: e.target.value}
+                            })}
+                          >
+                            <option>Islami Bank</option>
+                            <option>Dutch-Bangla Bank</option>
+                            <option>City Bank</option>
+                            <option>BRAC Bank</option>
+                            <option>Eastern Bank</option>
+                            <option>Sonali Bank</option>
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-500 uppercase ml-1">Routing Number</label>
+                          <input 
+                            type="text" 
+                            className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                            placeholder="000000000"
+                            value={verificationData.bankAccount.routingNumber}
+                            onChange={(e) => setVerificationData({
+                              ...verificationData, 
+                              bankAccount: {...verificationData.bankAccount, routingNumber: e.target.value}
+                            })}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Mobile Financial Services */}
+                  <div className="space-y-6 pt-4 border-t border-slate-50">
+                    <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                      <Smartphone className="w-4 h-4" /> Mobile Banking (MFS)
+                    </h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">bKash Number</label>
+                        <input 
+                          type="text" 
+                          className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                          placeholder="017XXXXXXXX"
+                          value={verificationData.mfs.bkash}
+                          onChange={(e) => setVerificationData({
+                            ...verificationData, 
+                            mfs: {...verificationData.mfs, bkash: e.target.value}
+                          })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">Nagad Number</label>
+                        <input 
+                          type="text" 
+                          className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                          placeholder="01XXXXXXXXX"
+                          value={verificationData.mfs.nagad}
+                          onChange={(e) => setVerificationData({
+                            ...verificationData, 
+                            mfs: {...verificationData.mfs, nagad: e.target.value}
+                          })}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Business Documents */}
+                <div className="space-y-6">
+                  <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                    <Settings className="w-4 h-4" /> Legal Documents
+                  </h3>
+                  <div className="space-y-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">Trade License No</label>
+                        <input 
+                          type="text" 
+                          className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                          value={verificationData.tradeLicense}
+                          onChange={(e) => setVerificationData({...verificationData, tradeLicense: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">License Image</label>
+                        <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 cursor-pointer overflow-hidden relative h-[58px]">
+                          {verificationData.tradeLicenseImg ? (
+                            <img src={verificationData.tradeLicenseImg} className="absolute inset-0 w-full h-full object-cover" />
+                          ) : (
+                            <><Upload className="w-4 h-4 text-slate-400" /><span className="text-[10px] text-slate-400 font-bold uppercase">Upload Trade License</span></>
+                          )}
+                          <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, 'license')} />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">NID Card Number</label>
+                        <input 
+                          type="text" 
+                          className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                          value={verificationData.nidCard}
+                          onChange={(e) => setVerificationData({...verificationData, nidCard: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">NID Image</label>
+                        <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 cursor-pointer overflow-hidden relative h-[58px]">
+                          {verificationData.nidCardImg ? (
+                            <img src={verificationData.nidCardImg} className="absolute inset-0 w-full h-full object-cover" />
+                          ) : (
+                            <><Upload className="w-4 h-4 text-slate-400" /><span className="text-[10px] text-slate-400 font-bold uppercase">Upload NID/Passport</span></>
+                          )}
+                          <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, 'nid')} />
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">TIN Number</label>
+                        <input 
+                          type="text" 
+                          className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl focus:outline-none focus:ring-2 focus:ring-amber-500/20" 
+                          placeholder="TIN-000000"
+                          value={verificationData.tinCertificate}
+                          onChange={(e) => setVerificationData({...verificationData, tinCertificate: e.target.value})}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">TIN Certificate</label>
+                        <label className="flex items-center gap-3 p-4 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200 cursor-pointer overflow-hidden relative h-[58px]">
+                          {verificationData.tinCertificateImg ? (
+                            <img src={verificationData.tinCertificateImg} className="absolute inset-0 w-full h-full object-cover" />
+                          ) : (
+                            <><Upload className="w-4 h-4 text-slate-400" /><span className="text-[10px] text-slate-400 font-bold uppercase">Upload TIN Certificate</span></>
+                          )}
+                          <input type="file" className="hidden" accept="image/*" onChange={(e) => handleImageUpload(e, 'tin')} />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`mt-12 flex items-center justify-between p-8 rounded-[2.5rem] border transition-all ${
+                  vendorProfile?.verified ? 'bg-emerald-50/50 border-emerald-100 shadow-lg shadow-emerald-500/5' :
+                  vendorProfile?.verificationStatus === 'pending' ? 'bg-amber-50/50 border-amber-100 shadow-lg shadow-amber-500/5' :
+                  vendorProfile?.verificationStatus === 'rejected' ? 'bg-red-50/50 border-red-100 shadow-lg shadow-red-500/5' :
+                  'bg-slate-50 border-slate-100'
+                }`}>
+                  <div className="flex items-center gap-5">
+                    <div className={`p-4 rounded-3xl shadow-xl transition-all ${
+                      vendorProfile?.verified ? 'bg-emerald-500 text-white shadow-emerald-500/20 rotate-3' :
+                      vendorProfile?.verificationStatus === 'pending' ? 'bg-amber-500 text-white shadow-amber-500/20 animate-pulse' :
+                      vendorProfile?.verificationStatus === 'rejected' ? 'bg-red-500 text-white shadow-red-500/20 -rotate-3' :
+                      'bg-white text-slate-400 border border-slate-100'
+                    }`}>
+                      {vendorProfile?.verified ? <ShieldCheck className="w-7 h-7" /> :
+                       vendorProfile?.verificationStatus === 'pending' ? <Clock className="w-7 h-7" /> :
+                       vendorProfile?.verificationStatus === 'rejected' ? <AlertCircle className="w-7 h-7" /> :
+                       <ShieldCheck className="w-7 h-7 opacity-20" />}
+                    </div>
+                    <div className="space-y-1">
+                      <p className={`text-xl font-black ${
+                        vendorProfile?.verified ? 'text-emerald-900' :
+                        vendorProfile?.verificationStatus === 'pending' ? 'text-amber-900' :
+                        vendorProfile?.verificationStatus === 'rejected' ? 'text-red-900' :
+                        'text-slate-900'
+                      }`}>
+                        {vendorProfile?.verified ? 'ভেরিফাইড মার্চেন্ট' : 
+                         vendorProfile?.verificationStatus === 'pending' ? 'ভেরিফিকেশন পেন্ডিং' :
+                         vendorProfile?.verificationStatus === 'rejected' ? 'ভেরিফিকেশন রিজেক্টেড' :
+                         'ভেরিফিকেশন রিকোয়েস্ট করুন'}
+                      </p>
+                      <p className={`text-sm font-medium ${
+                        vendorProfile?.verified ? 'text-emerald-600/80' :
+                        vendorProfile?.verificationStatus === 'pending' ? 'text-amber-600/80' :
+                        vendorProfile?.verificationStatus === 'rejected' ? 'text-red-600/80' :
+                        'text-slate-500'
+                      }`}>
+                        {vendorProfile?.verified ? 'আপনার প্রোফাইল বর্তমানে সক্রিয় ও ভেরিফাইড।' : 
+                         vendorProfile?.verificationStatus === 'pending' ? 'আপনার নথিগুলি অ্যাডমিন রিভিউ করছে (২৪-৪৮ ঘণ্টা)।' :
+                         vendorProfile?.verificationStatus === 'rejected' ? `রিজেক্ট: ${vendorProfile.rejectionReason || 'নথি অস্পষ্ট ছিল।'}` :
+                         'আপনার দোকানের সঠিক নথি আপলোড করে ভেরিফিকেশন করুন।'}
+                      </p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={handleUpdateVerification}
+                    disabled={isSubmitting || vendorProfile?.verificationStatus === 'pending' || vendorProfile?.verified}
+                    className={`px-10 py-4 rounded-2xl font-black text-sm uppercase tracking-widest transition-all active:scale-95 shadow-xl disabled:opacity-50 ${
+                      vendorProfile?.verified ? 'bg-emerald-500 text-white shadow-emerald-500/20' :
+                      vendorProfile?.verificationStatus === 'pending' ? 'bg-amber-500 text-white shadow-amber-500/20' :
+                      vendorProfile?.verificationStatus === 'rejected' ? 'bg-red-500 text-white shadow-red-500/20' :
+                      'bg-slate-900 text-white hover:bg-amber-600'
+                    }`}
+                  >
+                    {isSubmitting ? 'প্রসেসিং...' : 
+                     vendorProfile?.verified ? 'ভেরিফাইড' :
+                     vendorProfile?.verificationStatus === 'pending' ? 'রিভিউধীন' :
+                     vendorProfile?.verificationStatus === 'rejected' ? 'আবার পাঠান' :
+                     'Verify now'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+
+        {/* Global Modals */}
+        <AnimatePresence>
+          {selectedImage && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-slate-900/90 backdrop-blur-md"
+              onClick={() => setSelectedImage(null)}
+            >
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="relative max-w-4xl max-h-[90vh] overflow-hidden rounded-[3rem] bg-white p-2 shadow-2xl"
+                onClick={e => e.stopPropagation()}
+              >
+                <img 
+                  src={selectedImage} 
+                  className="w-full h-full object-contain rounded-[2.5rem]" 
+                  referrerPolicy="no-referrer"
+                />
+                <button 
+                  onClick={() => setSelectedImage(null)}
+                  className="absolute top-6 right-6 p-3 bg-white/10 backdrop-blur-md border border-white/20 text-white rounded-2xl hover:bg-white hover:text-slate-900 transition-all shadow-xl"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {showAddProduct && (
+            <div className="fixed inset-0 flex items-center justify-center z-[300] p-4">
+              <motion.div 
+                initial={{ opacity: 0 }} 
+                animate={{ opacity: 1 }} 
+                exit={{ opacity: 0 }}
+                onClick={() => setShowAddProduct(false)}
+                className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="relative bg-white w-full max-w-2xl rounded-[3rem] shadow-2xl p-10 overflow-hidden"
+              >
+                <div className="flex items-center justify-between mb-8">
+                  <h3 className="text-2xl font-bold text-slate-900 uppercase tracking-tighter">
+                    {editingProduct ? 'পণ্য এডিট করুন' : 'নতুন পণ্য যোগ করুন'}
+                  </h3>
+                  <button onClick={() => { setShowAddProduct(false); resetProductForm(); }} className="p-2 bg-slate-50 rounded-xl">
+                    <X className="w-5 h-5 text-slate-400" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 overflow-y-auto max-h-[60vh] p-2">
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase">Product Name</label>
+                    <input 
+                      type="text" 
+                      className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-amber-500/20"
+                      placeholder="যেমন: দাদিনাগরি চাল"
+                      value={newProduct.name}
+                      onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase">Category</label>
+                    <select 
+                      className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-amber-500/20 appearance-none"
+                      value={newProduct.category}
+                      onChange={(e) => {
+                        const catId = e.target.value;
+                        const cat = CATEGORIES.find(c => c.id === catId);
+                        setNewProduct({
+                          ...newProduct, 
+                          category: catId,
+                          subCategory: cat?.sub.split(', ')[0] || ''
+                        });
+                      }}
+                    >
+                      {CATEGORIES.map(cat => (
+                        <option key={cat.id} value={cat.id}>{cat.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase">Sub-category</label>
+                    <select 
+                      className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-amber-500/20 appearance-none"
+                      value={newProduct.subCategory}
+                      onChange={(e) => setNewProduct({...newProduct, subCategory: e.target.value})}
+                    >
+                      {CATEGORIES.find(c => c.id === newProduct.category)?.sub.split(', ').map(sub => (
+                        <option key={sub} value={sub}>{sub}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase">Price (৳)</label>
+                    <input 
+                      type="number" 
+                      className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-amber-500/20"
+                      placeholder="0.00"
+                      value={newProduct.price}
+                      onChange={(e) => setNewProduct({...newProduct, price: e.target.value})}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase">Stock Query</label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="number" 
+                        className="flex-1 p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-amber-500/20"
+                        placeholder="Quantity"
+                        value={newProduct.stock}
+                        onChange={(e) => setNewProduct({...newProduct, stock: e.target.value})}
+                      />
+                      <select 
+                        className="p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-amber-500/20"
+                        value={newProduct.unit}
+                        onChange={(e) => setNewProduct({...newProduct, unit: e.target.value})}
+                      >
+                        <option>Kg</option>
+                        <option>Pcs</option>
+                        <option>Ltr</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 md:col-span-2">
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-400 uppercase">Discount Price (Optional)</label>
+                      <input 
+                        type="number" 
+                        className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-amber-500/20" 
+                        placeholder="৳0.00"
+                        value={newProduct.discountPrice}
+                        onChange={(e) => setNewProduct({...newProduct, discountPrice: e.target.value})}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs font-bold text-slate-400 uppercase">Flash Sale?</label>
+                      <div 
+                        onClick={() => setNewProduct({...newProduct, isFlashSale: !newProduct.isFlashSale})}
+                        className={`w-full p-4 rounded-2xl border-2 transition-all cursor-pointer flex items-center justify-between ${
+                          newProduct.isFlashSale ? 'bg-amber-50 border-amber-500 text-amber-700' : 'bg-slate-50 border-transparent text-slate-400'
+                        }`}
+                      >
+                        <span className="font-bold uppercase text-[10px]">Flash Sale</span>
+                        <div className={`w-8 h-4 rounded-full relative transition-colors ${newProduct.isFlashSale ? 'bg-amber-500' : 'bg-slate-300'}`}>
+                          <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${newProduct.isFlashSale ? 'left-4.5' : 'left-0.5'}`} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-2 space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase flex justify-between">
+                      Short Product Video (Optional)
+                      <span className="text-amber-500 lowercase tracking-widest text-[8px] font-black underline">Max 50 Sec / 10MB</span>
+                    </label>
+                    <div className="relative group rounded-2xl overflow-hidden border-2 border-dashed border-slate-100 min-h-[120px] flex items-center justify-center bg-slate-50 hover:bg-white transition-all">
+                      {newProduct.video ? (
+                        <div className="relative w-full h-full p-2">
+                          <video 
+                            src={newProduct.video} 
+                            className="w-full h-32 object-cover rounded-xl"
+                            controls
+                          />
+                          <button 
+                            onClick={() => setNewProduct(prev => ({ ...prev, video: '' }))}
+                            className="absolute top-4 right-4 p-2 bg-red-500 text-white rounded-xl shadow-lg hover:scale-110 transition-transform"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <label className="flex flex-col items-center gap-2 cursor-pointer p-8">
+                          <div className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center group-hover:bg-amber-100 transition-colors">
+                            <Plus className="w-6 h-6 text-slate-400 group-hover:text-amber-600" />
+                          </div>
+                          <div className="text-center">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Click to upload video</p>
+                            <p className="text-[8px] text-slate-300 font-bold mt-1">MP4, WEBM (Max 50s)</p>
+                          </div>
+                          <input 
+                            type="file" 
+                            className="hidden" 
+                            accept="video/*" 
+                            onChange={(e) => handleImageUpload(e, 'video')} 
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-2 space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase">Description</label>
+                    <textarea 
+                      className="w-full p-4 bg-slate-50 border-none rounded-2xl focus:ring-2 focus:ring-amber-500/20 min-h-[100px]"
+                      placeholder="পণ্য সম্পর্কে বিস্তারিত লিখুন..."
+                      value={newProduct.description}
+                      onChange={(e) => setNewProduct({...newProduct, description: e.target.value})}
+                    />
+                  </div>
+                  <div className="md:col-span-2 space-y-2">
+                    <label className="text-xs font-bold text-slate-400 uppercase flex justify-between">
+                      Product Images ({newProduct.images.length}/6)
+                      <span className="text-amber-500 lowercase">সর্বোচ্চ ৬টি</span>
+                    </label>
+                    <div className="grid grid-cols-5 gap-2">
+                      {newProduct.images.map((img, idx) => (
+                        <div key={idx} className="relative group aspect-square rounded-xl overflow-hidden border border-slate-100">
+                          <img src={img} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          <button 
+                            onClick={() => setNewProduct(prev => ({ ...prev, images: prev.images.filter((_, i) => i !== idx) }))}
+                            className="absolute top-1 right-1 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                      {newProduct.images.length < 6 && (
+                        <label className="aspect-square bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 hover:border-amber-400 hover:bg-amber-50 cursor-pointer transition-all">
+                          <Plus className="w-6 h-6" />
+                          <input 
+                            type="file" 
+                            className="hidden" 
+                            accept="image/*" 
+                            multiple
+                            onChange={(e) => handleImageUpload(e, 'product')} 
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={handleAddProduct}
+                  disabled={isSubmitting}
+                  className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold hover:bg-amber-600 shadow-xl transition-all disabled:opacity-50"
+                >
+                  {isSubmitting ? 'প্রসেসিং হচ্ছে...' : (editingProduct ? 'আপডেট নিশ্চিত করুন' : 'আপলোড নিশ্চিত করুন')}
+                </button>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {trackingOrderId && (
+            <div className="fixed inset-0 flex items-center justify-center z-[300] p-4">
+              <motion.div 
+                initial={{ opacity: 0 }} 
+                animate={{ opacity: 1 }} 
+                exit={{ opacity: 0 }}
+                onClick={() => setTrackingOrderId(null)}
+                className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                className="relative bg-white w-full max-w-lg rounded-[3rem] shadow-2xl p-8 sm:p-12 overflow-hidden"
+              >
+                <div className="flex items-center justify-between mb-8">
+                  <div>
+                    <h3 className="text-2xl font-black text-slate-900 uppercase tracking-tighter">অর্ডার ট্র্যাকিং</h3>
+                    <p className="text-slate-400 text-xs font-bold uppercase mt-1">ID: #{trackingOrderId.slice(-8).toUpperCase()}</p>
+                  </div>
+                  <button onClick={() => setTrackingOrderId(null)} className="p-3 bg-slate-50 text-slate-400 hover:text-slate-900 rounded-2xl transition-colors">
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+
+                <div className="space-y-8">
+                  {/* Shipping Info Card */}
+                  <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-sm border border-slate-100 italic font-bold text-blue-600">
+                        <Truck className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Courier Partner</p>
+                        <p className="text-lg font-black text-slate-900">Pathao Courier</p>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Tracking Number</p>
+                      <p className="text-sm font-mono font-bold text-blue-600">PATHAO-{(Math.random() * 1000000).toFixed(0)}</p>
+                    </div>
+                  </div>
+
+                  {/* Tracking Timeline */}
+                  <div className="relative pl-8 space-y-10">
+                    <div className="absolute left-[11px] top-2 bottom-2 w-0.5 bg-slate-100" />
+                    
+                    {[
+                      { status: 'Order Placed', time: '12:30 PM, Today', active: true, done: true },
+                      { status: 'Payment Confirmed', time: '12:45 PM, Today', active: true, done: true },
+                      { status: 'Shipped', time: '02:00 PM, Today', active: true, done: false },
+                      { status: 'Out for Delivery', time: 'Expected Tomorrow', active: false, done: false }
+                    ].map((step, idx) => (
+                      <div key={idx} className="relative">
+                        <div className={`absolute -left-8 w-6 h-6 rounded-full border-4 border-white shadow-sm flex items-center justify-center transition-colors ${
+                          step.done ? 'bg-green-500' : step.active ? 'bg-blue-500 animate-pulse' : 'bg-slate-200'
+                        }`}>
+                          {step.done && <CheckCircle2 className="w-3 h-3 text-white" />}
+                        </div>
+                        <div>
+                          <h4 className={`font-bold text-sm ${step.active ? 'text-slate-900' : 'text-slate-400'}`}>{step.status}</h4>
+                          <p className="text-[11px] text-slate-400 font-bold uppercase">{step.time}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="pt-4">
+                    <button 
+                      onClick={() => setTrackingOrderId(null)}
+                      className="w-full py-5 bg-slate-900 text-white rounded-[1.5rem] font-bold shadow-xl shadow-slate-200 hover:scale-[1.02] active:scale-95 transition-all text-lg"
+                    >
+                      বন্ধ করুন
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        <AnimatePresence>
+          {showQR && (
+            <div className="fixed inset-0 flex items-center justify-center z-[300] p-4">
+              <motion.div 
+                initial={{ opacity: 0 }} 
+                animate={{ opacity: 1 }} 
+                exit={{ opacity: 0 }}
+                onClick={() => setShowQR(null)}
+                className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+              />
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                className="relative bg-white p-12 rounded-[3rem] shadow-2xl flex flex-col items-center text-center space-y-6"
+              >
+                <h3 className="text-xl font-bold text-slate-900 uppercase">ডেলিভারি ভেরিফিকেশন</h3>
+                <div className="p-4 bg-slate-50 rounded-3xl border-2 border-dashed border-amber-200">
+                  <QRCodeSVG value={showQR} size={200} />
+                </div>
+                <p className="text-sm text-slate-500 max-w-xs">
+                  পণ্য সঠিক থাকলে ডেলিভারি ম্যানকে এই কিউআর কোডটি স্ক্যান করতে দিন।
+                </p>
+                <button 
+                  onClick={() => setShowQR(null)}
+                  className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold"
+                >
+                  বন্ধ করুন
+                </button>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {selectedChat && (
+        <ChatSystem 
+          isOpen={showChatModal}
+          onClose={() => setShowChatModal(false)}
+          receiverId={selectedChat.participants.find(p => p !== auth.currentUser?.uid)}
+          receiverName={
+            selectedChat.vendorId === auth.currentUser?.uid 
+              ? `Customer (${selectedChat.participants.find(p => p !== auth.currentUser?.uid)?.slice(0, 6)})`
+              : `Vendor (${selectedChat.vendorId.slice(0, 6)})`
+          }
+        />
+      )}
+    </div>
+  );
+}

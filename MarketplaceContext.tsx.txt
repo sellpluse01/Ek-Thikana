@@ -1,0 +1,281 @@
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { auth, db } from '../lib/firebase';
+import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import { doc, getDoc, setDoc, updateDoc, addDoc } from 'firebase/firestore';
+import { UserProfile, CartItem, Product, Coupon, VendorProfile, UserNotification, Order } from '../types';
+import { collection, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
+import toast from 'react-hot-toast';
+
+interface MarketplaceContextType {
+  user: User | null;
+  profile: UserProfile | null;
+  loading: boolean;
+  products: Product[];
+  vendors: VendorProfile[];
+  activeCoupons: Coupon[];
+  cart: CartItem[];
+  wishlist: string[];
+  addToCart: (item: CartItem) => void;
+  removeFromCart: (productId: string) => void;
+  toggleWishlist: (productId: string) => void;
+  isInWishlist: (productId: string) => boolean;
+  clearCart: () => void;
+  loginWithGoogle: () => Promise<void>;
+  logout: () => Promise<void>;
+  unreadChatsCount: number;
+  notifications: UserNotification[];
+  unreadNotificationsCount: number;
+  markNotificationAsRead: (id: string) => Promise<void>;
+  createNotification: (notif: Omit<UserNotification, 'id' | 'read' | 'createdAt'>) => Promise<void>;
+  createOrder: (orderData: Omit<Order, 'id' | 'createdAt'>) => Promise<void>;
+}
+
+const MarketplaceContext = createContext<MarketplaceContextType | undefined>(undefined);
+
+export const MarketplaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [vendors, setVendors] = useState<VendorProfile[]>([]);
+  const [activeCoupons, setActiveCoupons] = useState<Coupon[]>([]);
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    const saved = localStorage.getItem('cart');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [wishlist, setWishlist] = useState<string[]>(() => {
+    const saved = localStorage.getItem('wishlist');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [unreadChatsCount, setUnreadChatsCount] = useState(0);
+  const [notifications, setNotifications] = useState<UserNotification[]>([]);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
+
+  useEffect(() => {
+    localStorage.setItem('cart', JSON.stringify(cart));
+  }, [cart]);
+
+  useEffect(() => {
+    localStorage.setItem('wishlist', JSON.stringify(wishlist));
+  }, [wishlist]);
+
+  useEffect(() => {
+    const handleFirebaseError = (err: any, context: string) => {
+      console.error(`${context} Error:`, err);
+      if (err?.message?.includes('Quota exceeded') || err?.code === 'resource-exhausted') {
+        toast.error('Firebase দৈনিক ফ্রি লিমিট শেষ হয়ে গেছে। দয়া করে আগামীকাল আবার চেষ্টা করুন।', {
+          id: 'quota-error-marketplace',
+          duration: 10000
+        });
+      }
+    };
+
+    // 1. Auth Listener - Runs once on mount
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
+      try {
+        if (currentUser) {
+          setUser(currentUser);
+          const docRef = doc(db, 'users', currentUser.uid);
+          const docSnap = await getDoc(docRef);
+          const isBootstrapAdmin = currentUser.email === 'elicencebd@gmail.com';
+
+          if (docSnap.exists()) {
+            const existingProfile = docSnap.data() as UserProfile;
+            setProfile(existingProfile);
+            
+            if (isBootstrapAdmin && existingProfile.role !== 'admin') {
+              await updateDoc(docRef, { role: 'admin' });
+              setProfile(prev => prev ? { ...prev, role: 'admin' } : null);
+            }
+          } else {
+            const newProfile: UserProfile = {
+              userId: currentUser.uid,
+              name: currentUser.displayName || 'Guest User',
+              email: currentUser.email || '',
+              role: isBootstrapAdmin ? 'admin' : 'customer',
+              walletBalance: 0,
+              createdAt: new Date().toISOString(),
+            };
+            await setDoc(docRef, newProfile);
+            setProfile(newProfile);
+          }
+        } else {
+          setUser(null);
+          setProfile(null);
+        }
+      } catch (err: any) {
+        handleFirebaseError(err, "Auth State Change");
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    // 2. Global Data Listeners
+    const qProducts = query(collection(db, 'products'), where('approved', '==', true));
+    const unsubProducts = onSnapshot(qProducts, (snap) => {
+      setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() } as Product)));
+    }, (err) => handleFirebaseError(err, "Marketplace Products"));
+
+    const qCoupons = query(collection(db, 'coupons'), where('active', '==', true));
+    const unsubCoupons = onSnapshot(qCoupons, (snap) => {
+      setActiveCoupons(snap.docs.map(d => ({ id: d.id, ...d.data() } as Coupon)));
+    }, (err) => handleFirebaseError(err, "Marketplace Coupons"));
+
+    const qVendors = query(collection(db, 'vendors'), where('verified', '==', true));
+    const unsubVendors = onSnapshot(qVendors, (snap) => {
+      setVendors(snap.docs.map(d => ({ vendorId: d.id, ...d.data() } as VendorProfile)));
+    }, (err) => handleFirebaseError(err, "Marketplace Vendors"));
+
+    return () => {
+      unsubscribeAuth();
+      unsubProducts();
+      unsubCoupons();
+      unsubVendors();
+    };
+  }, []); // Run once on mount
+
+  // 3. User-Specific Data Listeners
+  useEffect(() => {
+    if (!user?.uid) {
+      setUnreadChatsCount(0);
+      setNotifications([]);
+      setUnreadNotificationsCount(0);
+      return;
+    }
+
+    const handleFirebaseError = (err: any, context: string) => {
+      console.error(`${context} Error:`, err);
+    };
+
+    const qChats = query(collection(db, 'chats'), where('participants', 'array-contains', user.uid));
+    const unsubChats = onSnapshot(qChats, (snap) => {
+      let count = 0;
+      snap.docs.forEach(doc => {
+        const data = doc.data() as any;
+        if (data.vendorId === user.uid) count += (data.unreadCountVendor || 0);
+        if (data.customerId === user.uid) count += (data.unreadCountCustomer || 0);
+      });
+      setUnreadChatsCount(count);
+    }, (err) => handleFirebaseError(err, "Marketplace Chats"));
+
+    const qNotifs = query(
+      collection(db, 'notifications'), 
+      where('userId', '==', user.uid),
+      orderBy('createdAt', 'desc'),
+      limit(20)
+    );
+    const unsubNotifications = onSnapshot(qNotifs, (snap) => {
+      const notifs = snap.docs.map(d => ({ id: d.id, ...d.data() } as UserNotification));
+      setNotifications(notifs);
+      setUnreadNotificationsCount(notifs.filter(n => !n.read).length);
+    }, (err) => handleFirebaseError(err, "Marketplace Notifications"));
+
+    return () => {
+      unsubChats();
+      unsubNotifications();
+    };
+  }, [user?.uid]);
+
+  const addToCart = (item: CartItem) => {
+    setCart((prev) => {
+      const existing = prev.find((i) => i.productId === item.productId);
+      if (existing) {
+        return prev.map((i) => i.productId === item.productId ? { ...i, quantity: i.quantity + item.quantity } : i);
+      }
+      return [...prev, item];
+    });
+  };
+
+  const removeFromCart = (productId: string) => {
+    setCart((prev) => prev.filter((i) => i.productId !== productId));
+  };
+
+  const clearCart = () => setCart([]);
+
+  const toggleWishlist = (productId: string) => {
+    setWishlist((prev) => 
+      prev.includes(productId) 
+        ? prev.filter(id => id !== productId) 
+        : [...prev, productId]
+    );
+  };
+
+  const isInWishlist = (productId: string) => wishlist.includes(productId);
+
+  const markNotificationAsRead = async (id: string) => {
+    try {
+      await updateDoc(doc(db, 'notifications', id), { read: true });
+    } catch (err) {
+      console.error("Error marking notification as read:", err);
+    }
+  };
+
+  const createNotification = async (notif: Omit<UserNotification, 'id' | 'read' | 'createdAt'>) => {
+    try {
+      await addDoc(collection(db, 'notifications'), {
+        ...notif,
+        read: false,
+        createdAt: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error("Error creating notification:", err);
+    }
+  };
+
+  const createOrder = async (orderData: Omit<Order, 'id' | 'createdAt'>) => {
+    try {
+      const orderRef = await addDoc(collection(db, 'orders'), {
+        ...orderData,
+        createdAt: new Date().toISOString()
+      });
+      
+      // Create notification for customer
+      await createNotification({
+        userId: orderData.customerId,
+        title: 'অর্ডার সফল হয়েছে!',
+        message: `আপনার অর্ডার #${orderRef.id.slice(-6).toUpperCase()} সফলভাবে গ্রহণ করা হয়েছে।`,
+        type: 'order',
+        link: '#orders'
+      });
+
+      // Create notification for vendor
+      await createNotification({
+        userId: orderData.vendorId,
+        title: 'নতুন অর্ডার এসেছে!',
+        message: `আপনি একটি নতুন অর্ডার পেয়েছেন (${orderData.items.length} টি পণ্য)।`,
+        type: 'order',
+        link: '#store_orders'
+      });
+    } catch (err) {
+      console.error("Error creating order:", err);
+      throw err;
+    }
+  };
+
+  const loginWithGoogle = async () => {
+    const provider = new GoogleAuthProvider();
+    await signInWithPopup(auth, provider);
+  };
+
+  const logout = async () => {
+    await signOut(auth);
+  };
+
+  return (
+    <MarketplaceContext.Provider value={{ 
+      user, profile, loading, products, vendors, activeCoupons, cart, wishlist,
+      addToCart, removeFromCart, toggleWishlist, isInWishlist, clearCart,
+      loginWithGoogle, logout, unreadChatsCount,
+      notifications, unreadNotificationsCount, markNotificationAsRead,
+      createNotification, createOrder
+    }}>
+      {children}
+    </MarketplaceContext.Provider>
+  );
+};
+
+export const useMarketplace = () => {
+  const context = useContext(MarketplaceContext);
+  if (!context) throw new Error('useMarketplace must be used within a MarketplaceProvider');
+  return context;
+};

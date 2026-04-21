@@ -1,0 +1,462 @@
+import { motion } from 'motion/react';
+import { ShoppingBag, Zap, ChevronRight, Star, Heart, ChevronLeft, ShieldCheck, Leaf, Percent } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { CATEGORIES, MOCK_PRODUCTS, MOCK_VENDORS } from '../data/mockData';
+import { useMarketplace } from '../context/MarketplaceContext';
+
+export const getCategoryLabel = (category: string, subCategory?: string) => {
+  if (category === 'grocery') {
+    if (subCategory?.includes('সবজি') || subCategory?.includes('মাছ') || subCategory?.includes('মাংস')) {
+      return { text: 'ফ্রেশ ও অর্গানিক', color: 'bg-emerald-100 text-emerald-700' };
+    }
+    return { text: '১০০% ফ্রেশ', color: 'bg-emerald-50 text-emerald-600' };
+  }
+  if (category === 'pharmacy') return { text: 'অরিজিনাল ওষুধ', color: 'bg-blue-50 text-blue-600' };
+  if (category === 'electronics') return { text: 'অফিসিয়াল ওয়ারেন্টি', color: 'bg-indigo-50 text-indigo-600' };
+  if (category === 'wholesale') return { text: 'পাইকারি রেট', color: 'bg-orange-50 text-orange-600' };
+  if (category === 'fashion') return { text: 'প্রিমিয়াম ফ্যাশন', color: 'bg-violet-50 text-violet-600' };
+  if (category === 'baby') return { text: 'নিরাপদ ও কোমল', color: 'bg-cyan-50 text-cyan-600' };
+  return null;
+};
+
+const CategorySection = ({ 
+  title, 
+  categoryId, 
+  products: catProducts, 
+  onCategorySelect, 
+  onProductClick,
+  toggleWishlist,
+  isInWishlist,
+  handleBuyNow
+}: { 
+  key?: string,
+  title: string, 
+  categoryId: string, 
+  products: any[],
+  onCategorySelect: (id: string) => void,
+  onProductClick?: (p: any) => void,
+  toggleWishlist: (id: string) => void,
+  isInWishlist: (id: string) => boolean,
+  handleBuyNow: (p: any) => void
+}) => {
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  if (catProducts.length === 0) return null;
+
+  return (
+    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h2 className="text-3xl font-bold text-slate-900 font-sans tracking-tight">{title}</h2>
+          <p className="text-slate-500 mt-1">এই ক্যাটাগরির সেরা পণ্যসমূহ</p>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="hidden sm:flex gap-2">
+            <button 
+              onClick={() => rowRef.current?.scrollBy({ left: -300, behavior: 'smooth' })}
+              className="w-10 h-10 bg-white border border-slate-200 rounded-full items-center justify-center text-slate-400 hover:text-amber-600 transition-all shadow-sm active:scale-95"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <button 
+              onClick={() => rowRef.current?.scrollBy({ left: 300, behavior: 'smooth' })}
+              className="w-10 h-10 bg-white border border-slate-200 rounded-full items-center justify-center text-slate-400 hover:text-amber-600 transition-all shadow-sm active:scale-95"
+            >
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+          <button 
+            onClick={() => onCategorySelect(categoryId)}
+            className="text-amber-600 font-bold hover:underline flex items-center gap-1 text-sm uppercase tracking-widest"
+          >
+            সব দেখুন <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      <div 
+        ref={rowRef}
+        className="flex gap-6 overflow-x-auto pb-8 no-scrollbar snap-x snap-mandatory"
+      >
+        {catProducts.map((product) => {
+          const badge = getCategoryLabel(product.category, product.subCategory);
+          return (
+            <motion.div
+              key={product.id}
+              initial={{ opacity: 0, scale: 0.95 }}
+              whileInView={{ opacity: 1, scale: 1 }}
+              viewport={{ once: true }}
+              className="flex-shrink-0 w-[calc(50%-12px)] sm:w-[280px] snap-start group bg-white rounded-[2rem] p-4 border border-slate-100 hover:border-amber-200 hover:shadow-2xl hover:shadow-slate-100 transition-all flex flex-col"
+            >
+              <div className="relative aspect-square rounded-2xl overflow-hidden bg-slate-50 mb-4">
+                <img 
+                  onClick={() => onProductClick?.(product)}
+                  src={product.images?.[0] || (product as any).image} 
+                  alt={product.name}
+                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500 cursor-pointer"
+                  referrerPolicy="no-referrer"
+                />
+                
+                <button 
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleWishlist(product.id);
+                  }}
+                  className={`absolute top-3 right-3 w-9 h-9 rounded-full flex items-center justify-center transition-all shadow-lg backdrop-blur-md z-10 ${
+                    isInWishlist(product.id) 
+                      ? 'bg-red-500 text-white' 
+                      : 'bg-white/80 text-slate-400 hover:text-red-500'
+                  }`}
+                >
+                  <Heart className={`w-5 h-5 ${isInWishlist(product.id) ? 'fill-current' : ''}`} />
+                </button>
+
+                {badge && (
+                  <div className={`absolute top-3 left-3 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-tighter shadow-sm flex items-center gap-1 z-10 ${badge.color}`}>
+                    {product.category === 'grocery' && <Leaf className="w-2.5 h-2.5" />}
+                    {badge.text}
+                  </div>
+                )}
+
+                <div className="absolute bottom-3 left-3 inline-flex items-center gap-1 px-2 py-1 bg-white/90 backdrop-blur rounded-full text-[10px] font-bold text-slate-900 shadow-sm">
+                  <Star className="w-3 h-3 fill-amber-500 text-amber-500" /> {product.rating || 4.5}
+                </div>
+              </div>
+
+              <div className="flex-1 space-y-2">
+                <h3 
+                  onClick={() => onProductClick?.(product)}
+                  className="font-bold text-slate-900 group-hover:text-amber-600 transition-colors uppercase truncate text-sm cursor-pointer"
+                >
+                  {product.name}
+                </h3>
+                <div className="flex items-center justify-between">
+                  <div className="flex flex-col">
+                    <span className="text-lg font-black text-slate-900">৳{product.price}</span>
+                    {product.unit && <span className="text-[10px] text-slate-400 -mt-1">per {product.unit}</span>}
+                  </div>
+                  <span className="text-[10px] font-bold text-slate-400 capitalize bg-slate-50 px-2 py-0.5 rounded-md truncate max-w-[80px]">{product.category}</span>
+                </div>
+              </div>
+
+              <button 
+                onClick={() => handleBuyNow(product)}
+                className="mt-4 py-3 bg-slate-900 text-white rounded-xl text-xs font-bold hover:bg-amber-600 transition-all flex items-center justify-center gap-2 active:scale-95 shadow-lg shadow-slate-200"
+              >
+                কিনুন <Zap className="w-4 h-4 fill-amber-400 text-amber-400" />
+              </button>
+            </motion.div>
+          );
+        })}
+      </div>
+    </section>
+  );
+};
+
+export default function Home({ 
+  onCategorySelect, 
+  setView, 
+  onOpenAuth,
+  onAddToCart,
+  onCheckout,
+  onProductClick
+}: { 
+  onCategorySelect: (id: string) => void, 
+  setView: (v: any) => void, 
+  onOpenAuth: (tab: any) => void,
+  onAddToCart?: (item: any) => void,
+  onCheckout?: () => void,
+  onProductClick?: (product: any) => void
+}) {
+  const { toggleWishlist, isInWishlist, products, vendors } = useMarketplace();
+  const [timeLeft, setTimeLeft] = useState(3600 * 5); // 5 hours
+  
+  // Flash sale products: prioritize real products marked as isFlashSale
+  const hasRealProducts = products.length > 0;
+  const filteredFlashSale = products.filter(p => p.isFlashSale);
+  
+  const flashSaleProducts = filteredFlashSale.length > 0 
+    ? filteredFlashSale 
+    : (hasRealProducts ? [] : MOCK_PRODUCTS.slice(4, 10)); // Only show mock if no real products AT ALL exist in DB
+    
+  const regularProducts = hasRealProducts ? products : MOCK_PRODUCTS;
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimeLeft(prev => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatTime = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const handleBuyNow = (product: any) => {
+    if (onAddToCart && onCheckout) {
+      onAddToCart({...product, productId: product.id, quantity: 1});
+      onCheckout();
+    }
+  };
+
+  return (
+    <div className="space-y-16 pb-20">
+      {/* Hero Section */}
+      <section className="relative px-4 sm:px-6 lg:px-8 pt-6 overflow-hidden">
+        <div className="max-w-7xl mx-auto relative h-[450px] sm:h-[550px] bg-slate-100 rounded-[2.5rem] overflow-hidden group">
+          <div className="absolute inset-0 opacity-10 pointer-events-none">
+            <img 
+              src="https://picsum.photos/seed/bangladesh-map/1920/1080?grayscale" 
+              className="w-full h-full object-cover scale-110 group-hover:scale-100 transition-transform duration-1000"
+              alt="BD Map"
+              referrerPolicy="no-referrer"
+            />
+          </div>
+          <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 via-transparent to-slate-200/50"></div>
+          
+          <div className="relative h-full flex flex-col items-center justify-center text-center px-6 z-10">
+            <motion.div
+              initial={{ opacity: 0, y: 30 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-6"
+            >
+              <span className="inline-block px-4 py-1.5 bg-white/80 backdrop-blur rounded-full text-sm font-bold text-amber-700 shadow-sm border border-amber-50">
+                Premium Marketplace 2026
+              </span>
+              <h1 className="text-5xl sm:text-7xl font-bold text-slate-900 leading-[1.1]">
+                সবকিছু এক ঠিকানায় <br />
+                <span className="text-amber-600">ফ্রেশ ও দ্রুত</span>
+              </h1>
+              <p className="max-w-xl mx-auto text-lg text-slate-600 font-medium">
+                বাংলাদেশের সেরা ভেন্ডরদের থেকে বাছাইকৃত পণ্য এখন আপনার হাতের নাগালে।
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-4">
+                <button 
+                  onClick={() => onCategorySelect('grocery')}
+                  className="bg-slate-900 text-white px-8 py-4 rounded-full font-bold shadow-xl shadow-slate-200 hover:scale-105 active:scale-95 transition-all flex items-center gap-2"
+                >
+                  বাজার শুরু করুন <ChevronRight className="w-5 h-5" />
+                </button>
+                <button 
+                  onClick={() => onOpenAuth('vendor')}
+                  className="bg-white text-slate-900 px-8 py-4 rounded-full font-bold border border-slate-200 hover:bg-slate-50 active:scale-95 transition-all flex items-center gap-2"
+                >
+                  সেলার হিসেবে যোগ দিন <ShoppingBag className="w-5 h-5" />
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        </div>
+      </section>
+
+      {/* Category Grid */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h2 className="text-3xl font-bold text-slate-900 font-sans tracking-tight">ক্যাটাগরি সমূহ</h2>
+            <p className="text-slate-500 mt-1">আপনার প্রয়োজনীয় পণ্য বেছে নিন</p>
+          </div>
+          <button className="text-amber-600 font-bold hover:underline flex items-center gap-1 text-sm uppercase tracking-widest">
+            সব দেখুন <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-11 gap-4">
+          {CATEGORIES.map((cat, i) => (
+            <motion.div
+              key={cat.id}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05 }}
+              onClick={() => onCategorySelect(cat.id)}
+              className="bg-white p-4 rounded-3xl border border-slate-100 hover:border-amber-200 hover:shadow-xl hover:shadow-slate-100 cursor-pointer transition-all group flex flex-col items-center text-center h-full"
+            >
+              <div className={`w-12 h-12 rounded-2xl ${cat.color} flex items-center justify-center mb-3 group-hover:scale-110 transition-transform flex-shrink-0`}>
+                <cat.icon className="w-6 h-6" />
+              </div>
+              <h3 className="font-bold text-slate-900 text-[10px] leading-tight sm:text-xs line-clamp-2">{cat.name}</h3>
+            </motion.div>
+          ))}
+        </div>
+      </section>
+
+      {/* Flash Sale Section - Ultra High Impact Neon Billboard */}
+      <section className="w-full bg-slate-950 py-12 sm:py-20 overflow-hidden relative border-y-2 border-amber-500/30 my-16 group">
+        {/* Animated Background Gradients */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute -top-[50%] -left-[10%] w-[120%] h-[200%] bg-[radial-gradient(circle_at_center,rgba(245,158,11,0.06)_0%,transparent_70%)] animate-pulse"></div>
+          
+          {/* Scrolling Background Text */}
+          <div className="absolute top-1/2 -translate-y-1/2 left-0 w-full flex whitespace-nowrap opacity-[0.02] select-none">
+            <motion.div 
+              animate={{ x: [0, -2000] }}
+              transition={{ duration: 40, repeat: Infinity, ease: "linear" }}
+              className="text-[12rem] sm:text-[18rem] font-black italic uppercase tracking-tighter"
+            >
+              FLASH SALE FLASH SALE FLASH SALE FLASH SALE FLASH SALE FLASH SALE
+            </motion.div>
+          </div>
+        </div>
+
+        <div className="max-w-7xl mx-auto px-4 lg:px-8 relative z-10 flex flex-col lg:flex-row items-center gap-12 lg:gap-20">
+          {/* Heading & Digital Timer Box */}
+          <div className="flex-shrink-0 flex flex-col items-center lg:items-start text-center lg:text-left space-y-8">
+            <div className="space-y-4">
+               <motion.div 
+                 initial={{ x: -20, opacity: 0 }}
+                 whileInView={{ x: 0, opacity: 1 }}
+                 className="inline-flex items-center gap-3 px-6 py-2 bg-amber-500 text-black rounded-full text-[10px] font-black tracking-widest uppercase italic shadow-[0_0_30px_rgba(245,158,11,0.4)]"
+               >
+                 <Zap className="w-4 h-4 fill-current animate-bounce" /> DHAMAKA OFFERS
+               </motion.div>
+               <h2 className="text-5xl sm:text-7xl font-black text-white italic leading-none tracking-tighter">
+                 FLASH <br />
+                 <span className="text-amber-500 drop-shadow-[0_0_30px_rgba(245,158,11,0.6)]">SALE</span>
+               </h2>
+            </div>
+            
+            {/* Minimal Digital Timer */}
+            <div className="flex items-center gap-4">
+              {[
+                { val: formatTime(timeLeft).split(':')[1], label: 'MIN' },
+                { val: formatTime(timeLeft).split(':')[2], label: 'SEC' }
+              ].map((time, idx) => (
+                <div key={idx} className="flex flex-col items-center">
+                  <div className="w-16 h-20 bg-slate-900 rounded-[1.5rem] flex items-center justify-center text-white text-3xl font-black shadow-[0_20px_40px_rgba(0,0,0,0.5)] border-t border-white/5">
+                    <span className="tabular-nums">{time.val}</span>
+                  </div>
+                  <span className="text-[9px] font-black text-amber-500/50 mt-2 tracking-widest">{time.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Marquee Body - Shows all products in horizontal style */}
+          <div className="flex-1 w-full overflow-hidden relative h-48 sm:h-52 flex items-center">
+             <motion.div 
+               className="flex gap-8 absolute"
+               animate={{ x: ["0%", "-50%"] }}
+               transition={{ 
+                 duration: 25, 
+                 repeat: Infinity, 
+                 ease: "linear" 
+               }}
+             >
+                {/* Loop all flash sale products repeated for seamless marquee */}
+                {[...flashSaleProducts, ...flashSaleProducts].map((p, i) => (
+                  <div 
+                    key={i} 
+                    className="w-[280px] sm:w-[360px] h-32 sm:h-40 bg-white rounded-[2.5rem] p-3 sm:p-4 flex items-center gap-4 border-2 border-white/10 hover:border-amber-500 transition-all cursor-pointer shadow-2xl group flex-shrink-0 relative overflow-hidden"
+                    onClick={() => onProductClick?.(p)}
+                  >
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-amber-500/5 blur-3xl pointer-events-none"></div>
+                    
+                    <div className="w-20 h-20 sm:w-28 sm:h-28 bg-slate-50 rounded-[1.5rem] overflow-hidden flex-shrink-0 border border-slate-100 shadow-inner group-hover:scale-105 transition-transform duration-500">
+                      <img 
+                        src={p.images?.[0] || p.image} 
+                        alt={p.name} 
+                        className="w-full h-full object-cover" 
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                    
+                    <div className="flex-1 min-w-0 pr-2 space-y-1 sm:space-y-2">
+                      <h4 className="font-extrabold text-slate-900 text-xs sm:text-base truncate uppercase tracking-tight">{p.name}</h4>
+                      <div className="flex flex-col">
+                        <div className="flex items-center gap-2">
+                           <span className="text-red-600 font-black text-lg sm:text-xl">৳{(p.price * 0.6).toFixed(0)}</span>
+                           <span className="text-slate-300 text-[10px] sm:text-xs line-through font-bold">৳{p.price}</span>
+                        </div>
+                        <div className="mt-2 space-y-1">
+                           <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden">
+                             <div className="w-[85%] h-full bg-gradient-to-r from-red-600 to-amber-500 rounded-full" />
+                           </div>
+                           <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">85% Sold Out</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="absolute top-3 right-3">
+                       <div className="px-2 py-0.5 bg-red-600 text-white rounded-full font-black text-[9px] shadow-lg animate-pulse">
+                          -40%
+                       </div>
+                    </div>
+                  </div>
+                ))}
+             </motion.div>
+          </div>
+        </div>
+      </section>
+
+      {/* Render products by category rows */}
+      {CATEGORIES.map(cat => (
+        <CategorySection 
+          key={cat.id} 
+          title={cat.name} 
+          categoryId={cat.id} 
+          products={regularProducts.filter(p => p.category === cat.id)}
+          onCategorySelect={onCategorySelect}
+          onProductClick={onProductClick}
+          toggleWishlist={toggleWishlist}
+          isInWishlist={isInWishlist}
+          handleBuyNow={handleBuyNow}
+        />
+      ))}
+
+      {/* Top Sellers Section at the Bottom */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 border-t border-slate-100">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h2 className="text-3xl font-bold text-slate-900 font-sans tracking-tight">টপ সেলার শপ</h2>
+            <p className="text-slate-500 mt-1">আমাদের সেরা ও বিশ্বস্ত সেলারদের শপ</p>
+          </div>
+        </div>
+
+        <div className="flex gap-6 overflow-x-auto pb-8 no-scrollbar snap-x snap-mandatory">
+          {(vendors.length > 0 ? vendors : MOCK_VENDORS).map((vendor, i) => (
+            <motion.div
+              key={vendor.vendorId}
+              initial={{ opacity: 0, x: 30 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              transition={{ delay: i * 0.1 }}
+              viewport={{ once: true }}
+              className="flex-shrink-0 w-64 snap-start group bg-white rounded-[2.5rem] p-6 border border-slate-100 hover:border-amber-200 hover:shadow-2xl hover:shadow-slate-100 transition-all text-center"
+            >
+              <div className="relative w-24 h-24 mx-auto mb-4 p-1 bg-gradient-to-tr from-amber-500 to-amber-200 rounded-3xl">
+                <div className="w-full h-full bg-white rounded-[1.25rem] overflow-hidden">
+                  <img 
+                    src={vendor.storeLogo || `https://picsum.photos/seed/${vendor.vendorId}/200/200`} 
+                    alt={vendor.storeName}
+                    className="w-full h-full object-cover group-hover:scale-110 transition-transform"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+                {vendor.verified && (
+                  <div className="absolute -bottom-2 -right-2 bg-blue-500 text-white p-1.5 rounded-full shadow-lg">
+                    <ShieldCheck className="w-4 h-4" />
+                  </div>
+                )}
+              </div>
+              <h3 className="font-bold text-slate-900 truncate mb-1">{vendor.storeName}</h3>
+              <div className="flex items-center justify-center gap-1 mb-3">
+                <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
+                <span className="text-xs font-bold text-slate-600">{vendor.rating || 4.5}</span>
+                <span className="text-slate-300 mx-1">|</span>
+                <span className="text-xs font-bold text-slate-400 capitalize">{vendor.totalSales || 0} Sales</span>
+              </div>
+              <button 
+                onClick={() => onCategorySelect('all')}
+                className="w-full py-2.5 bg-slate-50 text-slate-900 rounded-xl text-xs font-bold hover:bg-amber-600 hover:text-white transition-all active:scale-95"
+              >
+                ভিসিট করুন
+              </button>
+            </motion.div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
