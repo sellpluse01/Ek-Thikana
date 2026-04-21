@@ -1,0 +1,230 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // --- Default Deny ---
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() { return request.auth != null; }
+    function isEmailVerified() { return isSignedIn() && request.auth.token.email_verified == true; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function isAdmin() { 
+      return isSignedIn() && (
+        request.auth.token.email == 'elicencebd@gmail.com' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      ); 
+    }
+    function isMasterAdmin() {
+      return isSignedIn() && request.auth.token.email == 'elicencebd@gmail.com';
+    }
+    function isVendor() {
+      return isSignedIn() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'vendor' ||
+        exists(/databases/$(database)/documents/vendors/$(request.auth.uid)) ||
+        isAdmin()
+      );
+    }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+
+    // --- Validation Helpers (Pillar 2) ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['userId', 'name', 'role', 'walletBalance']) 
+        && data.userId is string && data.userId.size() <= 128
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.role in ['customer', 'vendor', 'admin']
+        && data.walletBalance is number && data.walletBalance >= 0
+        && (data.get('email', '') is string)
+        && (data.get('status', 'active') is string && data.get('status', 'active') in ['active', 'blocked', 'temp_blocked']);
+    }
+
+    function isValidVendor(data) {
+      return data.get('vendorId', '') is string && data.get('vendorId', '').size() <= 128
+        && data.get('storeName', '') is string && data.get('storeName', '').size() > 0
+        && (data.get('category', '') is string || data.get('categories', []) is list)
+        && (data.get('status', 'active') is string && data.get('status', 'active') in ['active', 'blocked', 'temp_blocked']);
+    }
+
+    function isValidProduct(data) {
+      return data.get('name', '') is string && data.get('name', '').size() > 0
+        && data.get('price', 0) is number
+        && data.get('vendorId', '') is string
+        && (data.get('images', []) is list)
+        && (data.get('video', '') is string || data.get('video', null) == null);
+    }
+
+    function isValidOrder(data) {
+      return data.keys().hasAll(['customerId', 'vendorId', 'totalAmount', 'status'])
+        && data.customerId is string && data.vendorId is string
+        && data.totalAmount is number && data.totalAmount >= 0
+        && data.status in ['pending', 'shipped', 'delivered', 'cancelled']
+        && (data.get('paymentStatus', 'unpaid') is string)
+        && (data.get('adminCommission', 0) is number)
+        && (data.get('vendorEarning', 0) is number)
+        && (data.get('items', []) is list);
+    }
+
+    function isValidReview(data) {
+      return data.keys().hasAll(['userId', 'productId', 'rating', 'comment', 'userName', 'createdAt'])
+        && data.userId is string && data.userId == request.auth.uid
+        && data.productId is string
+        && data.userName is string && data.userName.size() > 0
+        && data.rating is number && data.rating >= 1 && data.rating <= 5
+        && data.comment is string && data.comment.size() > 0 && data.comment.size() <= 2000;
+    }
+
+    function isValidChat(data) {
+      return data.keys().hasAll(['participants', 'vendorId', 'customerId'])
+        && data.participants is list && data.participants.size() == 2
+        && (data.participants[0] is string && data.participants[1] is string)
+        && data.participants.hasAny([request.auth.uid])
+        && data.vendorId is string && data.customerId is string;
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['senderId', 'receiverId', 'text', 'timestamp', 'read'])
+        && data.senderId == request.auth.uid
+        && data.receiverId is string
+        && data.text is string && data.text.size() > 0 && data.text.size() <= 5000
+        && data.read is bool
+        && (data.get('productId', null) == null || data.productId is string);
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['userId', 'title', 'message', 'type', 'read', 'createdAt'])
+        && data.userId is string && data.userId.size() <= 128
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 200
+        && data.message is string && data.message.size() > 0 && data.message.size() <= 1000
+        && data.type in ['order', 'system', 'wallet', 'vendor', 'chat']
+        && data.read is bool
+        && data.createdAt is string
+        && (data.get('link', '') is string);
+    }
+
+    // --- Collection Rules ---
+
+    match /notifications/{notifId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && isValidNotification(incoming()); 
+      allow update: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin())
+                     && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow delete: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(userId) && isValidUser(incoming()) 
+                     && (incoming().role != 'admin' || request.auth.token.email == 'elicencebd@gmail.com')
+                     && incoming().walletBalance == 0;
+      allow update: if (isOwner(userId) && isValidUser(incoming()) 
+                         && (incoming().role == existing().role || (existing().role == 'customer' && incoming().role == 'vendor') || request.auth.token.email == 'elicencebd@gmail.com')
+                         && (incoming().role != 'admin' || request.auth.token.email == 'elicencebd@gmail.com')
+                         && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'address', 'profilePic', 'role', 'createdAt', 'email'])
+                       ) || isAdmin();
+    }
+
+    match /vendors/{vendorId} {
+      allow get: if true;
+      allow list: if true;
+      allow create: if isOwner(vendorId) && isValidVendor(incoming()) 
+                     && incoming().get('verified', false) == false;
+        allow update: if (isOwner(vendorId) && isValidVendor(incoming())
+                         && incoming().diff(existing()).affectedKeys().hasOnly([
+                           'storeName', 'storeBanner', 'storeLogo', 'description', 'contactEmail', 
+                           'contactPhone', 'contactPerson', 'storeAddress', 'tradeLicense', 
+                           'tradeLicenseImg', 'nidCard', 'nidCardImg', 'tinCertificate', 
+                           'tinCertificateImg', 'bankAccount', 'mfs', 'category', 'joinedAt', 
+                           'verificationStatus', 'updatedAt'
+                         ])
+                         && (incoming().get('verificationStatus', 'none') == 'pending' || incoming().verificationStatus == existing().verificationStatus)
+                       ) || isAdmin();
+    }
+
+    match /products/{productId} {
+      allow get: if true;
+      allow list: if (resource.data.get('approved', false) == true) || isAdmin() || isOwner(resource.data.vendorId);
+      allow create: if isVendor() && isValidProduct(incoming()) 
+                     && isOwner(incoming().vendorId);
+      allow update: if (isVendor() && isValidProduct(incoming()) 
+                         && isOwner(existing().vendorId)
+                         && (incoming().approved == existing().approved || isAdmin())
+                       ) || isAdmin();
+      allow delete: if isOwner(existing().vendorId) || isAdmin();
+    }
+
+    match /reviews/{reviewId} {
+      allow get: if true;
+      allow list: if true;
+      allow create: if isSignedIn() && isValidReview(incoming());
+      allow update, delete: if isOwner(existing().userId) || isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow get: if isSignedIn() && (isOwner(existing().customerId) || isOwner(existing().vendorId) || isAdmin());
+      allow list: if isAdmin();
+      allow list: if isSignedIn() && (resource.data.customerId == request.auth.uid || resource.data.vendorId == request.auth.uid);
+      allow create: if isSignedIn() && isValidOrder(incoming()) && isOwner(incoming().customerId);
+      allow update: if isSignedIn() && (
+        (isOwner(existing().vendorId) && incoming().diff(existing()).affectedKeys().hasOnly(['status']))
+        || (isOwner(existing().customerId) && existing().status == 'pending' && incoming().diff(existing()).affectedKeys().hasOnly(['status']))
+        || isAdmin()
+      );
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow list: if isAdmin();
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isAdmin();
+    }
+
+    match /coupons/{couponId} {
+      allow get, list: if true;
+      allow write: if isAdmin();
+    }
+
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || request.auth.token.email == 'elicencebd@gmail.com';
+    }
+
+    match /settings/commissions {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /chats/{chatId} {
+      // allow get if doc exists AND user is participant, OR if doc doesn't exist (to check existence safely)
+      allow get: if isSignedIn() && (resource == null || resource.data.participants.hasAny([request.auth.uid]));
+      allow list: if isSignedIn() && (resource.data.participants.hasAny([request.auth.uid]));
+      allow create: if isSignedIn() && isValidChat(incoming());
+      allow update: if isSignedIn() && (resource.data.participants.hasAny([request.auth.uid]) || isAdmin())
+                     && (incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastMessageTime', 'unreadCountVendor', 'unreadCountCustomer', 'lastSenderId']));
+
+      match /messages/{messageId} {
+        // Master Gate: Derive permissions from the parent chat document.
+        // This allows listing messages without requiring complex OR filters on every message document.
+        allow read, list: if isSignedIn() && (
+          get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid])
+          || isAdmin()
+        );
+        
+        allow create: if isSignedIn() && (
+          get(/databases/$(database)/documents/chats/$(chatId)).data.participants.hasAny([request.auth.uid])
+          && incoming().senderId == request.auth.uid
+          && isValidMessage(incoming())
+        );
+        
+        allow update: if isSignedIn() && (
+          (resource.data.receiverId == request.auth.uid || isAdmin())
+          && incoming().diff(existing()).affectedKeys().hasOnly(['read'])
+        );
+      }
+    }
+  }
+}

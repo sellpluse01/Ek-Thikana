@@ -1,0 +1,8 @@
+{
+  "name": "Ek-Thikana Premium Marketplace",
+  "description": "A premium multi-vendor marketplace platform featuring real-time analytics, AI-powered search, organic UI/UX, and secure payment integration for the Bangladesh market.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}

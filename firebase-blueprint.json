@@ -1,0 +1,167 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Information about customers, vendors, and admins",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["customer", "vendor", "admin"] },
+        "walletBalance": { "type": "number" },
+        "profilePic": { "type": "string" },
+        "address": { "type": "string" },
+        "isVerified": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "role", "walletBalance"]
+    },
+    "Vendor": {
+      "title": "Vendor Profile",
+      "description": "Details about a vendor's shop and KYC",
+      "type": "object",
+      "properties": {
+        "vendorId": { "type": "string" },
+        "storeName": { "type": "string" },
+        "storeBanner": { "type": "string" },
+        "storeLogo": { "type": "string" },
+        "verified": { "type": "boolean" },
+        "totalSales": { "type": "number" },
+        "rating": { "type": "number" },
+        "tradeLicense": { "type": "string" },
+        "nidCard": { "type": "string" },
+        "bankAccount": {
+          "type": "object",
+          "properties": {
+            "accountName": { "type": "string" },
+            "accountNumber": { "type": "string" },
+            "bankName": { "type": "string" },
+            "branchName": { "type": "string" },
+            "routingNumber": { "type": "string" }
+          }
+        },
+        "joinedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["vendorId", "storeName"]
+    },
+    "Product": {
+      "title": "Marketplace Product",
+      "description": "Product listed in the marketplace",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "category": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "images": { "type": "array", "items": { "type": "string" } },
+        "stock": { "type": "number" },
+        "unit": { "type": "string" },
+        "weightOptions": { "type": "array", "items": { "type": "number" } },
+        "vendorId": { "type": "string" },
+        "approved": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "price", "category", "vendorId"]
+    },
+    "Order": {
+      "title": "Customer Order",
+      "description": "Order details and tracking",
+      "type": "object",
+      "properties": {
+        "customerId": { "type": "string" },
+        "vendorId": { "type": "string" },
+        "items": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "adminCommission": { "type": "number" },
+        "vendorEarning": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "shipped", "delivered", "cancelled"] },
+        "paymentStatus": { "type": "string", "enum": ["unpaid", "paid"] },
+        "qrCodeData": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerId", "vendorId", "totalAmount", "status"]
+    },
+    "WalletTransaction": {
+      "title": "Financial Transaction",
+      "description": "History of money flowing in and out of wallets",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["recharge", "payment", "earning", "withdrawal"] },
+        "status": { "type": "string", "enum": ["pending", "completed", "failed"] },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "amount", "type", "status"]
+    },
+    "Review": {
+      "title": "Product Review",
+      "description": "Customer reviews for products",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "productId": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "productId", "rating", "comment"]
+    },
+    "Coupon": {
+      "title": "Discount Coupon",
+      "description": "Global or vendor-specific discount codes",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "discount": { "type": "number" },
+        "type": { "type": "string", "enum": ["percentage", "fixed"] },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "discount", "type", "active"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/vendors/{vendorId}": {
+      "schema": "Vendor",
+      "description": "Vendor specific store data"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "All products in the marketplace"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Customer reviews for products"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer orders"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "WalletTransaction",
+      "description": "Wallet transaction history"
+    },
+    "/coupons/{couponId}": {
+      "schema": "Coupon",
+      "description": "Discount coupons"
+    },
+    "/settings/commissions": {
+      "schema": {
+        "type": "object",
+        "properties": {
+          "categories": { "type": "object" }
+        }
+      },
+      "description": "Platform commission settings"
+    }
+  }
+}
